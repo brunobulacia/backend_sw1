@@ -1,12 +1,22 @@
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 
-//COPIE Y PEGUE DE LA DOCUMENTACION OFICIAL DE NESTJS PASSPORT (NO TOCAR JEJE)
+type JwtPayload = {
+  sub: string;
+  email: string;
+  isAdmin?: boolean;
+  type?: string;
+  tokenVersion?: number;
+};
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  //TRAEMOS EL SERVICIO DE PRISMA PARA PODER HACER CONSULTAS A LA BASE DE DATOS
   constructor(private readonly prisma: PrismaService) {
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET environment variable is not defined');
@@ -14,17 +24,49 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET as string,
+      secretOrKey: process.env.JWT_SECRET,
     });
   }
 
-  //ACA EN EL PAYLOAD VAN LOS DATOS QUE VAMOS A ENVIAR AL USUARIO UNA VEZ VALIDEMOS SU JWT DEL PERRITOOOUU
-  async validate(payload: any) {
+  async validate(payload: JwtPayload) {
+    if (payload.type && payload.type !== 'access') {
+      throw new UnauthorizedException('Invalid token');
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, username: true },
+      // 👇 devolvemos lo que necesitamos en req.user
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        isAdmin: true,
+        isActive: true,
+        lockedUntil: true,
+        tokenVersion: true,
+      },
     });
-    if (!user) return null;
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid token');
+    }
+
+    if ((payload.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) {
+      throw new UnauthorizedException('Invalid token');
+    }
+
+    // ❗ Política HU1: usuarios desactivados o bloqueados no pueden acceder
+    if (!user.isActive) {
+      throw new ForbiddenException('User is disabled');
+    }
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      throw new ForbiddenException('Account locked. Try later.');
+    }
+
+    // ✅ req.user tendrá { id, email, username, isAdmin, isActive, lockedUntil }
     return user;
   }
 }
+
+
+

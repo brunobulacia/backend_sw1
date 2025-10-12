@@ -1,9 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// ------------------------------------------------------------
+// Prisma schema from your ERD (English, PostgreSQL)
+// ------------------------------------------------------------
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,9 +10,260 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ------------------------- Enums ----------------------------
+
+enum ProjectVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum StoryStatus {
+  BACKLOG
+  SELECTED
+  IN_PROGRESS
+  TESTING
+  DONE
+  CANCELLED
+}
+
+enum EstimationMethod {
+  FIBONACCI
+  TSHIRT
+  POWERS_OF_TWO
+  CUSTOM
+}
+
+enum SessionStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+}
+
+// ------------------------- Models ---------------------------
+
 model User {
-  id       String @id @default(cuid())
-  email    String @unique
-  username String
-  password String
+  id             String    @id @default(uuid()) @db.Uuid
+  email          String    @unique
+  username       String    @unique
+  password       String
+  firstName      String
+  lastName       String
+  timezone       String
+  isActive       Boolean   @default(true)
+  isAdmin        Boolean   @default(false)
+  lastLogin      DateTime?
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  passwordChangedAt DateTime?
+  tokenVersion   Int       @default(0)
+
+  // Relations
+  ownedProjects     Project[]           @relation("ProjectOwner")
+  memberships       ProjectMember[]
+  createdRoles      Role[]              @relation("RoleCreator")
+  moderatedSessions EstimationSession[] @relation("SessionModerator")
+  estimationVotes   EstimationVote[]
+  passwordResetTokens PasswordResetToken[]
+  requestedPasswordResets PasswordResetToken[] @relation("PasswordResetAdmin")
+  passwordResetRequests PasswordResetRequest[]
+}
+
+model Project {
+  id               String            @id @default(uuid()) @db.Uuid
+  code             String            @unique
+  name             String
+  description      String?
+  visibility       ProjectVisibility @default(PRIVATE)
+  productObjective String?
+  definitionOfDone String?
+  sprintDuration   Int
+  qualityCriteria  Int?
+  status           ProjectStatus     @default(PLANNING)
+  startDate        DateTime
+  endDate          DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  archivedAt       DateTime?
+
+  // Ownership
+  ownerId String @db.Uuid
+  owner   User   @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // Relations
+  members            ProjectMember[]
+  stories            UserStory[]
+  configs            ProjectConfig[]
+  estimationSessions EstimationSession[]
+
+  @@index([ownerId])
+  @@index([status, visibility])
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @db.Uuid
+  userId    String   @db.Uuid
+  roleId    String?  @db.Uuid // link to Role per project
+  joinedAt  DateTime @default(now())
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  role    Role?   @relation(fields: [roleId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+model Role {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  code         String   @unique
+  description  String?
+  permission   Json
+  isSystemRole Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("RoleCreator", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  projectMembers ProjectMember[]
+}
+
+model UserStory {
+  id                 String      @id @default(uuid()) @db.Uuid
+  projectId          String      @db.Uuid
+  code               String
+  title              String
+  asA                String
+  iWant              String
+  soThat             String
+  acceptanceCriteria String
+  description        String?
+  priority           String
+  businessValue      Int
+  orderRank          Int
+  estimateHours      Int
+  label              Int?
+  status             StoryStatus @default(BACKLOG)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // Back relation to sessions
+  estimationSessions EstimationSession[] @relation("StorySessions")
+
+  @@unique([projectId, code])
+  @@index([projectId, status, orderRank])
+}
+
+model EstimationSession {
+  id              String           @id @default(uuid()) @db.Uuid
+  projectId       String           @db.Uuid
+  name            String
+  status          SessionStatus    @default(DRAFT)
+  finalEstimation String?
+  method          EstimationMethod
+  sequence        Json
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
+
+  // Link to story with a named relation
+  storyId String?    @db.Uuid
+  story   UserStory? @relation("StorySessions", fields: [storyId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  // Moderator
+  moderatorId String? @db.Uuid
+  moderator   User?   @relation("SessionModerator", fields: [moderatorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  isRevealed Boolean @default(false)
+
+  project Project          @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  votes   EstimationVote[]
+
+  @@index([projectId])
+  @@index([moderatorId])
+  @@index([storyId])
+}
+
+model EstimationVote {
+  id            String   @id @default(uuid()) @db.Uuid
+  sessionId     String   @db.Uuid
+  userId        String   @db.Uuid
+  voteValue     String
+  roundNumber   Int
+  justification String?
+  votedAt       DateTime @default(now())
+
+  session EstimationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([sessionId, userId, roundNumber])
+  @@index([sessionId])
+  @@index([userId])
+}
+
+model ProjectConfig {
+  id              String   @id @default(uuid()) @db.Uuid
+  projectId       String   @db.Uuid
+  key             String
+  value           String
+  type            String
+  category        String
+  description     String?
+  isSystemSetting Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([projectId, key])
+}
+
+model PasswordResetToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  requestedById String?  @db.Uuid
+  requestedIp   String?
+  requestedUserAgent String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  requestedBy User? @relation("PasswordResetAdmin", fields: [requestedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([requestedById])
+}
+
+model PasswordResetRequest {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String?  @db.Uuid
+  emailHash         String
+  requestedIp       String?
+  requestedUserAgent String?
+  createdAt         DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([emailHash, createdAt])
+  @@index([requestedIp, createdAt])
+  @@index([userId, createdAt])
 }

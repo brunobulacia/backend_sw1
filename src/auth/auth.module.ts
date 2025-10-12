@@ -5,6 +5,7 @@ import { PrismaModule } from 'src/prisma/prisma.module';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './strategies/jwt-strategy';
+import { MailerModule } from 'src/mailer/mailer.module';
 
 @Module({
   imports: [
@@ -12,8 +13,9 @@ import { JwtStrategy } from './strategies/jwt-strategy';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,
-      signOptions: { expiresIn: '2h' },
+      signOptions: { expiresIn: '8h' },
     }),
+    MailerModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
