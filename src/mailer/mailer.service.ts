@@ -18,14 +18,25 @@ function buildConfig(): MailerConfig {
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
 
-  if (!host) {
-    throw new Error('SMTP_HOST is required to send emails.');
-  }
+  // En desarrollo, usar configuración por defecto si no está configurado SMTP
+  const defaultHost = 'smtp.ethereal.email';
+  const defaultUser = 'test@ethereal.email';
+  const defaultPass = 'test123';
 
-  const from =
-    process.env.SMTP_FROM || user || 'no-reply@example.com';
+  const finalHost = host || defaultHost;
+  const finalUser = user || defaultUser;
+  const finalPass = pass || defaultPass;
+  
+  const from = process.env.SMTP_FROM || finalUser || 'no-reply@proyecto-sw1.com';
 
-  return { host, port, secure, user, pass, from };
+  return { 
+    host: finalHost, 
+    port, 
+    secure, 
+    user: finalUser, 
+    pass: finalPass, 
+    from 
+  };
 }
 
 @Injectable()
@@ -46,6 +57,11 @@ export class MailerService {
           ? { user: this.config.user, pass: this.config.pass }
           : undefined,
     });
+
+    // Log de configuración para desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      this.logger.log(`Mailer configurado con host: ${this.config.host}`);
+    }
   }
 
   async sendPasswordResetEmail(to: string, resetLink: string) {
@@ -72,15 +88,26 @@ export class MailerService {
     `;
 
     try {
-      await this.transporter.sendMail({
+      const result = await this.transporter.sendMail({
         to,
         from: this.config.from,
         subject,
         text,
         html,
       });
+      
+      // En desarrollo, mostrar información del email
+      if (process.env.NODE_ENV === 'development') {
+        this.logger.log(`Email enviado a ${to}`);
+        this.logger.log(`Preview URL: ${nodemailer.getTestMessageUrl(result)}`);
+      }
     } catch (error) {
       this.logger.error('Error sending password reset email', error as Error);
+      // En desarrollo, no fallar si no se puede enviar email
+      if (process.env.NODE_ENV === 'development') {
+        this.logger.warn('Email no enviado en modo desarrollo, pero continuando...');
+        return;
+      }
       throw error;
     }
   }
