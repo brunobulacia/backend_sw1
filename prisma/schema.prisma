@@ -25,6 +25,12 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+enum ProjectMemberRole {
+  PRODUCT_OWNER
+  SCRUM_MASTER
+  DEVELOPER
+}
+
 enum StoryStatus {
   BACKLOG
   SELECTED
@@ -87,7 +93,7 @@ model Project {
   productObjective String?
   definitionOfDone String?
   sprintDuration   Int
-  qualityCriteria  Int?
+  qualityCriteria  String?
   status           ProjectStatus     @default(PLANNING)
   startDate        DateTime
   endDate          DateTime?
@@ -106,25 +112,24 @@ model Project {
   estimationSessions EstimationSession[]
 
   @@index([ownerId])
+  @@unique([name])
   @@index([status, visibility])
 }
 
 model ProjectMember {
-  id        String   @id @default(uuid()) @db.Uuid
-  projectId String   @db.Uuid
-  userId    String   @db.Uuid
-  roleId    String?  @db.Uuid // link to Role per project
-  joinedAt  DateTime @default(now())
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id        String            @id @default(uuid()) @db.Uuid
+  projectId String            @db.Uuid
+  userId    String            @db.Uuid
+  role      ProjectMemberRole
+  joinedAt  DateTime          @default(now())
+  isActive  Boolean           @default(true)
+  createdAt DateTime          @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  role    Role?   @relation(fields: [roleId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@unique([projectId, userId])
   @@index([userId])
-  @@index([roleId])
 }
 
 model Role {
@@ -138,8 +143,6 @@ model Role {
 
   createdById String? @db.Uuid
   createdBy   User?   @relation("RoleCreator", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-
-  projectMembers ProjectMember[]
 }
 
 model UserStory {
@@ -152,7 +155,7 @@ model UserStory {
   soThat             String
   acceptanceCriteria String
   description        String?
-  priority           String
+  priority           Int
   businessValue      Int
   orderRank          Int
   estimateHours      Int
@@ -165,9 +168,22 @@ model UserStory {
 
   // Back relation to sessions
   estimationSessions EstimationSession[] @relation("StorySessions")
+  tags               UserStoryTag[]
 
   @@unique([projectId, code])
   @@index([projectId, status, orderRank])
+}
+
+model UserStoryTag {
+  id        String   @id @default(uuid()) @db.Uuid
+  storyId   String   @db.Uuid
+  value     String
+  createdAt DateTime @default(now())
+
+  story UserStory @relation(fields: [storyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([storyId, value])
+  @@index([value])
 }
 
 model EstimationSession {

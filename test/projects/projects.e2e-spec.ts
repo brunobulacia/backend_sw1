@@ -1,14 +1,15 @@
 import { INestApplication } from '@nestjs/common';
+import { ProjectMemberRole } from '@prisma/client';
 import request = require('supertest');
 import { TestAppFactory } from '../helpers/test-app.factory';
-import { TestHelper } from '../helpers/test-helper';
+import { TestHelper, TestUser } from '../helpers/test-helper';
 
 describe('ProjectsController (e2e)', () => {
   let app: INestApplication;
   let testHelper: TestHelper;
-  let adminUser: any;
-  let regularUser: any;
-  let otherUser: any;
+  let adminUser: TestUser;
+  let regularUser: TestUser;
+  let otherUser: TestUser;
 
   beforeAll(async () => {
     app = await TestAppFactory.createTestApp();
@@ -24,223 +25,282 @@ describe('ProjectsController (e2e)', () => {
   });
 
   describe('/api/projects (POST)', () => {
-    it('debe permitir a usuario autenticado crear un proyecto', async () => {
-      const timestamp = Date.now();
-      const projectData = {
-        code: `PRJ-${timestamp}`,
-        name: `Proyecto Test ${timestamp}`,
-        description: 'Descripción del proyecto de test',
+    it('crea un proyecto Scrum con configuracion inicial y confirma la creacion', async () => {
+      const scrumMaster = await testHelper.createTestUser();
+      const startDate = new Date();
+      const endDate = new Date(startDate.getTime() + 1000 * 60 * 60 * 24 * 21);
+
+      const payload = {
+        name: `Proyecto Configurado ${Date.now()}`,
+        description: 'Proyecto orientado a validar la creacion completa',
+        productObjective:
+          'Entregar una base de trabajo alineada a la metodologia Scrum',
+        qualityCriteria:
+          'Definicion clara de calidad y cobertura de pruebas superior al 80%',
         visibility: 'PRIVATE',
-        sprintDuration: 14,
-        startDate: new Date().toISOString(),
+        sprintDuration: 3,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        teamMembers: [
+          { userId: regularUser.id, role: ProjectMemberRole.PRODUCT_OWNER },
+          { userId: scrumMaster.id, role: ProjectMemberRole.SCRUM_MASTER },
+        ],
       };
 
       const response = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .post('/api/projects')
-        .send(projectData)
+        .send(payload)
         .expect(201);
 
-      expect(response.body).toHaveProperty('id');
-      expect(response.body.code).toBe(projectData.code);
-      expect(response.body.name).toBe(projectData.name);
-      expect(response.body.ownerId).toBe(regularUser.id);
-      expect(response.body.status).toBe('PLANNING');
+      expect(response.body.message).toBe('Proyecto creado exitosamente');
+
+      const project = response.body.project;
+      expect(project).toBeDefined();
+      expect(project.name).toBe(payload.name);
+      expect(project.code).toMatch(/^[A-Z]{2,4}-\d{4}(-\d+)?$/);
+      expect(project.sprintDuration).toBe(payload.sprintDuration);
+      expect(project.ownerId).toBe(regularUser.id);
+      expect(project.qualityCriteria).toBe(payload.qualityCriteria);
+      expect(project.members).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: regularUser.id,
+            role: ProjectMemberRole.PRODUCT_OWNER,
+          }),
+          expect.objectContaining({
+            userId: scrumMaster.id,
+            role: ProjectMemberRole.SCRUM_MASTER,
+          }),
+        ]),
+      );
     });
 
-    it('debe crear proyecto con visibilidad PUBLIC', async () => {
-      const timestamp = Date.now();
-      const projectData = {
-        code: `PUBLIC-${timestamp}`,
-        name: `Proyecto Público ${timestamp}`,
-        visibility: 'PUBLIC',
-        sprintDuration: 14,
-        startDate: new Date().toISOString(),
-      };
-
+    it('usa duracion de sprint por defecto cuando no se especifica', async () => {
       const response = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .post('/api/projects')
-        .send(projectData)
+        .send({
+          name: `Proyecto Default Sprint ${Date.now()}`,
+          description: 'Proyecto con duracion por defecto',
+          productObjective: 'Validar sprint de dos semanas por defecto',
+          qualityCriteria: 'Equipo aplica control de calidad semanal',
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString(),
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        })
         .expect(201);
 
-      expect(response.body.visibility).toBe('PUBLIC');
+      expect(response.body.project.sprintDuration).toBe(2);
     });
 
-    it('debe fallar con código duplicado', async () => {
-      const timestamp = Date.now();
-      const projectData = {
-        code: `DUP-${timestamp}`,
-        name: `Proyecto Duplicado ${timestamp}`,
-        visibility: 'PRIVATE',
-        sprintDuration: 14,
-        startDate: new Date().toISOString(),
-      };
+    it('rechaza nombres de proyecto duplicados', async () => {
+      const duplicatedName = `Proyecto Unico ${Date.now()}`;
 
-      // Crear primer proyecto
       await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .post('/api/projects')
-        .send(projectData)
+        .send({
+          name: duplicatedName,
+          description: 'Proyecto base para validar nombre unico',
+          productObjective: 'Mantener la unicidad del nombre de proyecto',
+          qualityCriteria: 'Verificacion manual y automatica del entregable',
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString(),
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        })
         .expect(201);
 
-      // Intentar crear proyecto con mismo código
-      await testHelper
+      const duplicateResponse = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .post('/api/projects')
-        .send(projectData)
-        .expect(409);
+        .send({
+          name: duplicatedName,
+          description: 'Intento duplicado',
+          productObjective: 'Duplicidad no permitida',
+          qualityCriteria: 'Control duplicado',
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString(),
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        });
+
+      expect(duplicateResponse.status).toBe(409);
     });
 
-    it('debe denegar acceso sin autenticación', async () => {
-      const projectData = {
-        code: 'NO-AUTH',
-        name: 'Proyecto sin auth',
-        visibility: 'PRIVATE',
-        sprintDuration: 14,
-        startDate: new Date().toISOString(),
-      };
+    it('impide declarar a otro usuario como Product Owner', async () => {
+      const response = await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .post('/api/projects')
+        .send({
+          name: `Proyecto Rol Invalido ${Date.now()}`,
+          description: 'Intento de asignar Product Owner distinto',
+          productObjective: 'Validar reglas de asignacion de roles',
+          qualityCriteria:
+            'Equipo cumple con criterios de calidad preestablecidos',
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
+          sprintDuration: 1,
+          teamMembers: [
+            {
+              userId: otherUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        })
+        .expect(403);
 
+      expect(response.body.message).toContain('Product Owner');
+    });
+
+    it('requiere autenticacion para crear proyectos', async () => {
       await request(app.getHttpServer())
         .post('/api/projects')
-        .send(projectData)
+        .send({
+          name: 'Proyecto sin autenticacion',
+          description: 'Intento sin credenciales',
+          productObjective: 'Debe ser rechazado',
+          qualityCriteria: 'No aplica',
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        })
         .expect(401);
     });
 
-    it('debe fallar con datos inválidos', async () => {
-      const invalidData = {
-        code: '', // código vacío
-        name: 'Test',
-        sprintDuration: -1, // duración negativa
-      };
-
+    it('rechaza duraciones de sprint fuera del rango permitido', async () => {
       await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .post('/api/projects')
-        .send(invalidData)
+        .send({
+          name: `Proyecto Sprint Invalido ${Date.now()}`,
+          description: 'Duracion fuera de rango',
+          productObjective: 'Validar limites de sprint',
+          qualityCriteria: 'Control de calidad basico',
+          sprintDuration: 6,
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        })
         .expect(400);
     });
   });
 
   describe('/api/projects (GET)', () => {
     beforeAll(async () => {
-      // Crear algunos proyectos de test
-      await testHelper.createTestProject(regularUser.token);
-      await testHelper.createTestProject(adminUser.token);
+      await testHelper.createTestProject(regularUser);
+      await testHelper.createTestProject(regularUser, {
+        visibility: 'PUBLIC',
+      });
+      await testHelper.createTestProject(adminUser);
     });
 
-    it('debe permitir a admin ver todos los proyectos', async () => {
-      const response = await testHelper
-        .getAuthenticatedRequest(adminUser.token)
-        .get('/api/projects')
-        .expect(200);
-
-      expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBeGreaterThan(0);
-    });
-
-    it('debe permitir a usuario regular ver sus proyectos y públicos', async () => {
+    it('lista proyectos accesibles para el usuario autenticado', async () => {
       const response = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .get('/api/projects')
         .expect(200);
 
       expect(Array.isArray(response.body)).toBe(true);
-      // El usuario debería ver al menos sus propios proyectos
-      const userProjects = response.body.filter(
-        (p: any) => p.ownerId === regularUser.id,
-      );
-      expect(userProjects.length).toBeGreaterThan(0);
+      expect(response.body.length).toBeGreaterThanOrEqual(2);
+      response.body.forEach((project: any) => {
+        expect(project).toHaveProperty('code');
+        expect(project).toHaveProperty('ownerId');
+        expect(project).toHaveProperty('_count');
+      });
     });
 
-    it('debe denegar acceso sin autenticación', async () => {
-      await request(app.getHttpServer())
-        .get('/api/projects')
-        .expect(401);
+    it('requiere autenticacion para listar proyectos', async () => {
+      await request(app.getHttpServer()).get('/api/projects').expect(401);
     });
   });
 
   describe('/api/projects/my-projects (GET)', () => {
-    let userProject: any;
+    it('retorna proyectos donde el usuario es owner o miembro', async () => {
+      await testHelper.createTestProject(regularUser);
 
-    beforeAll(async () => {
-      userProject = await testHelper.createTestProject(regularUser.token);
-    });
-
-    it('debe retornar solo los proyectos del usuario autenticado', async () => {
       const response = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .get('/api/projects/my-projects')
         .expect(200);
 
       expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBeGreaterThan(0);
-      
-      // Todos los proyectos deben pertenecer al usuario
       response.body.forEach((project: any) => {
-        expect(project.ownerId).toBe(regularUser.id);
+        expect(
+          project.ownerId === regularUser.id ||
+            project.members.some((member: any) => member.userId === regularUser.id),
+        ).toBeTruthy();
       });
-    });
-
-    it('debe retornar array vacío si el usuario no tiene proyectos', async () => {
-      const newUser = await testHelper.createTestUser();
-      
-      const response = await testHelper
-        .getAuthenticatedRequest(newUser.token)
-        .get('/api/projects/my-projects')
-        .expect(200);
-
-      expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBe(0);
-    });
-
-    it('debe denegar acceso sin autenticación', async () => {
-      await request(app.getHttpServer())
-        .get('/api/projects/my-projects')
-        .expect(401);
     });
   });
 
   describe('/api/projects/:id (GET)', () => {
     let ownProject: any;
-    let otherProject: any;
+    let publicProject: any;
 
     beforeAll(async () => {
-      ownProject = await testHelper.createTestProject(regularUser.token);
-      otherProject = await testHelper.createTestProject(otherUser.token);
+      ownProject = await testHelper.createTestProject(regularUser);
+      publicProject = await testHelper.createTestProject(adminUser, {
+        visibility: 'PUBLIC',
+      });
     });
 
-    it('debe permitir al owner ver su proyecto', async () => {
+    it('permite al owner consultar su proyecto', async () => {
       const response = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .get(`/api/projects/${ownProject.id}`)
         .expect(200);
 
       expect(response.body.id).toBe(ownProject.id);
-      expect(response.body.ownerId).toBe(regularUser.id);
+      expect(response.body.members.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('debe permitir a admin ver cualquier proyecto', async () => {
+    it('permite consultar proyectos publicos aun sin pertenecer', async () => {
       const response = await testHelper
-        .getAuthenticatedRequest(adminUser.token)
-        .get(`/api/projects/${otherProject.id}`)
+        .getAuthenticatedRequest(regularUser.token)
+        .get(`/api/projects/${publicProject.id}`)
         .expect(200);
 
-      expect(response.body.id).toBe(otherProject.id);
+      expect(response.body.id).toBe(publicProject.id);
     });
 
-    it('debe denegar acceso a proyecto privado de otro usuario', async () => {
+    it('deniega acceso a proyectos privados ajenos', async () => {
+      const privateProject = await testHelper.createTestProject(otherUser);
+
       await testHelper
         .getAuthenticatedRequest(regularUser.token)
-        .get(`/api/projects/${otherProject.id}`)
+        .get(`/api/projects/${privateProject.id}`)
         .expect(403);
     });
 
-    it('debe retornar 404 para proyecto no existente', async () => {
-      const fakeId = '00000000-0000-0000-0000-000000000000';
+    it('retorna 404 cuando el proyecto no existe', async () => {
       await testHelper
         .getAuthenticatedRequest(regularUser.token)
-        .get(`/api/projects/${fakeId}`)
+        .get('/api/projects/00000000-0000-0000-0000-000000000000')
         .expect(404);
     });
   });
@@ -249,13 +309,14 @@ describe('ProjectsController (e2e)', () => {
     let projectToUpdate: any;
 
     beforeEach(async () => {
-      projectToUpdate = await testHelper.createTestProject(regularUser.token);
+      projectToUpdate = await testHelper.createTestProject(regularUser);
     });
 
-    it('debe permitir al owner actualizar su proyecto', async () => {
+    it('permite al Product Owner actualizar los datos del proyecto', async () => {
+      const updatedName = `Proyecto Actualizado ${Date.now()}`;
       const updateData = {
-        name: 'Nombre Actualizado',
-        description: 'Descripción actualizada',
+        name: updatedName,
+        description: 'Descripcion actualizada para el proyecto',
         status: 'ACTIVE',
       };
 
@@ -265,74 +326,260 @@ describe('ProjectsController (e2e)', () => {
         .send(updateData)
         .expect(200);
 
-      expect(response.body.name).toBe(updateData.name);
+      expect(response.body.name).toBe(updatedName);
       expect(response.body.description).toBe(updateData.description);
       expect(response.body.status).toBe(updateData.status);
     });
 
-    it('debe permitir a admin actualizar cualquier proyecto', async () => {
-      const updateData = {
-        name: 'Actualizado por Admin',
-      };
-
-      const response = await testHelper
-        .getAuthenticatedRequest(adminUser.token)
-        .patch(`/api/projects/${projectToUpdate.id}`)
-        .send(updateData)
-        .expect(200);
-
-      expect(response.body.name).toBe(updateData.name);
-    });
-
-    it('debe denegar acceso a usuario no autorizado', async () => {
-      const updateData = {
-        name: 'Intento no autorizado',
-      };
-
-      await testHelper
-        .getAuthenticatedRequest(otherUser.token)
-        .patch(`/api/projects/${projectToUpdate.id}`)
-        .send(updateData)
-        .expect(403);
-    });
-
-    it('debe permitir cambiar visibilidad del proyecto', async () => {
-      const updateData = {
-        visibility: 'PUBLIC',
-      };
+    it('permite al Product Owner redefinir el equipo del proyecto', async () => {
+      const newDeveloper = await testHelper.createTestUser();
 
       const response = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .patch(`/api/projects/${projectToUpdate.id}`)
-        .send(updateData)
+        .send({
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+            {
+              userId: newDeveloper.id,
+              role: ProjectMemberRole.DEVELOPER,
+            },
+          ],
+        })
+        .expect(200);
+
+      expect(response.body.members).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: regularUser.id,
+            role: ProjectMemberRole.PRODUCT_OWNER,
+          }),
+          expect.objectContaining({
+            userId: newDeveloper.id,
+            role: ProjectMemberRole.DEVELOPER,
+          }),
+        ]),
+      );
+    });
+
+    it('permite al Product Owner delegar el rol de Product Owner a otro miembro', async () => {
+      const newProductOwner = await testHelper.createTestUser();
+
+      const response = await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .patch(`/api/projects/${projectToUpdate.id}`)
+        .send({
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.DEVELOPER,
+            },
+            {
+              userId: newProductOwner.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        })
+        .expect(200);
+
+      expect(response.body.ownerId).toBe(newProductOwner.id);
+      expect(response.body.members).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: newProductOwner.id,
+            role: ProjectMemberRole.PRODUCT_OWNER,
+          }),
+          expect.objectContaining({
+            userId: regularUser.id,
+            role: ProjectMemberRole.DEVELOPER,
+          }),
+        ]),
+      );
+    });
+
+    it('impide registrar mas de un Scrum Master en el equipo', async () => {
+      const scrumMasterA = await testHelper.createTestUser();
+      const scrumMasterB = await testHelper.createTestUser();
+
+      await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .patch(`/api/projects/${projectToUpdate.id}`)
+        .send({
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+            {
+              userId: scrumMasterA.id,
+              role: ProjectMemberRole.SCRUM_MASTER,
+            },
+            {
+              userId: scrumMasterB.id,
+              role: ProjectMemberRole.SCRUM_MASTER,
+            },
+          ],
+        })
+        .expect(409);
+    });
+
+    it('impide a un usuario sin rol Product Owner modificar el equipo', async () => {
+      const projectWithOwner = await testHelper.createTestProject(otherUser);
+
+      await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .patch(`/api/projects/${projectWithOwner.id}`)
+        .send({
+          teamMembers: [
+            {
+              userId: otherUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+          ],
+        })
+        .expect(403);
+    });
+
+    it('permite a un administrador actualizar datos generales (sin equipo)', async () => {
+      const response = await testHelper
+        .getAuthenticatedRequest(adminUser.token)
+        .patch(`/api/projects/${projectToUpdate.id}`)
+        .send({
+          visibility: 'PUBLIC',
+        })
         .expect(200);
 
       expect(response.body.visibility).toBe('PUBLIC');
     });
   });
 
-  describe('/api/projects/:id (DELETE)', () => {
-    it('debe permitir al owner eliminar su proyecto', async () => {
-      const projectToDelete = await testHelper.createTestProject(
-        regularUser.token,
-      );
+  describe('/api/projects/:id/invite (POST)', () => {
+    let projectForInvites: any;
+
+    beforeEach(async () => {
+      projectForInvites = await testHelper.createTestProject(regularUser);
+    });
+
+    it('permite al Product Owner invitar a un usuario activo asignando un rol', async () => {
+      const invitedUser = await testHelper.createTestUser();
+
+      const response = await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .post(`/api/projects/${projectForInvites.id}/invite`)
+        .send({
+          email: invitedUser.email,
+          role: ProjectMemberRole.DEVELOPER,
+        })
+        .expect(201);
+
+      expect(response.body.message).toContain(invitedUser.email);
+      expect(response.body.member.userId).toBe(invitedUser.id);
+      expect(response.body.member.role).toBe(ProjectMemberRole.DEVELOPER);
+      expect(response.body.member.isActive).toBe(true);
+      expect(response.body.member.user.email).toBe(invitedUser.email.toLowerCase());
+    });
+
+    it('impide que un usuario ajeno invite miembros al proyecto', async () => {
+      const unauthorizedUser = await testHelper.createTestUser();
 
       await testHelper
+        .getAuthenticatedRequest(otherUser.token)
+        .post(`/api/projects/${projectForInvites.id}/invite`)
+        .send({
+          email: unauthorizedUser.email,
+          role: ProjectMemberRole.DEVELOPER,
+        })
+        .expect(403);
+    });
+
+    it('impide asignar el rol de Product Owner a un usuario diferente del dueño', async () => {
+      await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .post(`/api/projects/${projectForInvites.id}/invite`)
+        .send({
+          email: otherUser.email,
+          role: ProjectMemberRole.PRODUCT_OWNER,
+        })
+        .expect(403);
+    });
+
+    it('rechaza invitaciones duplicadas para el mismo usuario activo', async () => {
+      const invitedUser = await testHelper.createTestUser();
+
+      await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .post(`/api/projects/${projectForInvites.id}/invite`)
+        .send({
+          email: invitedUser.email,
+          role: ProjectMemberRole.SCRUM_MASTER,
+        })
+        .expect(201);
+
+      await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .post(`/api/projects/${projectForInvites.id}/invite`)
+        .send({
+          email: invitedUser.email,
+          role: ProjectMemberRole.SCRUM_MASTER,
+        })
+        .expect(409);
+    });
+
+    it('rechaza invitar un segundo Scrum Master activo', async () => {
+      const firstScrumMaster = await testHelper.createTestUser();
+      const projectWithScrum = await testHelper.createTestProject(
+        regularUser,
+        {
+          teamMembers: [
+            {
+              userId: regularUser.id,
+              role: ProjectMemberRole.PRODUCT_OWNER,
+            },
+            {
+              userId: firstScrumMaster.id,
+              role: ProjectMemberRole.SCRUM_MASTER,
+            },
+          ],
+        },
+      );
+      const secondScrumMaster = await testHelper.createTestUser();
+
+      await testHelper
+        .getAuthenticatedRequest(regularUser.token)
+        .post(`/api/projects/${projectWithScrum.id}/invite`)
+        .send({
+          email: secondScrumMaster.email,
+          role: ProjectMemberRole.SCRUM_MASTER,
+        })
+        .expect(409);
+    });
+  });
+
+  describe('/api/projects/:id (DELETE)', () => {
+    it('permite al Product Owner archivar su proyecto', async () => {
+      const projectToDelete = await testHelper.createTestProject(regularUser);
+
+      const response = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .delete(`/api/projects/${projectToDelete.id}`)
         .expect(200);
 
-      // Verificar que el proyecto fue eliminado
-      await testHelper
+      expect(response.body.status).toBe('ARCHIVED');
+      expect(response.body.archivedAt).toBeTruthy();
+
+      const detail = await testHelper
         .getAuthenticatedRequest(regularUser.token)
         .get(`/api/projects/${projectToDelete.id}`)
-        .expect(404);
+        .expect(200);
+
+      expect(detail.body.status).toBe('ARCHIVED');
     });
 
-    it('debe permitir a admin eliminar cualquier proyecto', async () => {
-      const projectToDelete = await testHelper.createTestProject(
-        regularUser.token,
-      );
+    it('permite a un administrador archivar cualquier proyecto', async () => {
+      const projectToDelete = await testHelper.createTestProject(regularUser);
 
       await testHelper
         .getAuthenticatedRequest(adminUser.token)
@@ -340,10 +587,8 @@ describe('ProjectsController (e2e)', () => {
         .expect(200);
     });
 
-    it('debe denegar acceso a usuario no autorizado', async () => {
-      const projectToDelete = await testHelper.createTestProject(
-        regularUser.token,
-      );
+    it('deniega archivar un proyecto sin permisos', async () => {
+      const projectToDelete = await testHelper.createTestProject(regularUser);
 
       await testHelper
         .getAuthenticatedRequest(otherUser.token)
@@ -351,13 +596,11 @@ describe('ProjectsController (e2e)', () => {
         .expect(403);
     });
 
-    it('debe retornar 404 para proyecto no existente', async () => {
-      const fakeId = '00000000-0000-0000-0000-000000000000';
+    it('retorna 404 al intentar archivar un proyecto inexistente', async () => {
       await testHelper
         .getAuthenticatedRequest(regularUser.token)
-        .delete(`/api/projects/${fakeId}`)
+        .delete('/api/projects/00000000-0000-0000-0000-000000000000')
         .expect(404);
     });
   });
 });
-

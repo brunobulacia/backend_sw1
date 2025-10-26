@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ProjectMemberRole } from '@prisma/client';
 import nodemailer, { type Transporter } from 'nodemailer';
 
 type MailerConfig = {
@@ -64,13 +65,18 @@ export class MailerService {
     }
   }
 
+  private isNonCriticalEnvironment(): boolean {
+    const env = (process.env.NODE_ENV ?? '').toLowerCase();
+    return env === 'development' || env === 'test';
+  }
+
   async sendPasswordResetEmail(to: string, resetLink: string) {
     const subject = 'Restablece tu contrasena';
     const text = [
       'Hola,',
       '',
       'Recibimos una solicitud para restablecer tu contrasena.',
-      `Puedes crear una nueva contrasena usando el siguiente enlace (vigente por 30 minutos y de un solo uso):`,
+      'Puedes crear una nueva contrasena usando el siguiente enlace (vigente por 30 minutos y de un solo uso):',
       resetLink,
       '',
       'Si no solicitaste este cambio, puedes ignorar este mensaje.',
@@ -87,6 +93,10 @@ export class MailerService {
       <p>Si no solicitaste este cambio, puedes ignorar este mensaje.</p>
     `;
 
+    const isDevEnvironment =
+      (process.env.NODE_ENV ?? '').toLowerCase() === 'development';
+    const isSoftFailEnv = this.isNonCriticalEnvironment();
+
     try {
       const result = await this.transporter.sendMail({
         to,
@@ -95,17 +105,77 @@ export class MailerService {
         text,
         html,
       });
-      
-      // En desarrollo, mostrar información del email
-      if (process.env.NODE_ENV === 'development') {
+
+      if (isDevEnvironment) {
         this.logger.log(`Email enviado a ${to}`);
         this.logger.log(`Preview URL: ${nodemailer.getTestMessageUrl(result)}`);
       }
     } catch (error) {
       this.logger.error('Error sending password reset email', error as Error);
-      // En desarrollo, no fallar si no se puede enviar email
-      if (process.env.NODE_ENV === 'development') {
-        this.logger.warn('Email no enviado en modo desarrollo, pero continuando...');
+      if (isSoftFailEnv) {
+        this.logger.warn(
+          'Email no enviado en entorno de desarrollo/test, continuando...',
+        );
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async sendProjectInvitationEmail(params: {
+    to: string;
+    projectName: string;
+    role: ProjectMemberRole;
+    inviterName: string;
+  }): Promise<void> {
+    const roleLabels: Record<ProjectMemberRole, string> = {
+      PRODUCT_OWNER: 'Product Owner',
+      SCRUM_MASTER: 'Scrum Master',
+      DEVELOPER: 'Developer',
+    };
+
+    const roleLabel = roleLabels[params.role] ?? params.role;
+
+    const subject = `Invitacion al proyecto ${params.projectName}`;
+    const text = [
+      'Hola,',
+      '',
+      `${params.inviterName} te ha invitado a colaborar en el proyecto "${params.projectName}" como ${roleLabel}.`,
+      'Puedes iniciar sesion en la plataforma para comenzar a trabajar con tu equipo.',
+      '',
+      'Si no esperabas esta invitacion, simplemente ignora este mensaje.',
+    ].join('\n');
+
+    const html = `
+      <p>Hola,</p>
+      <p><strong>${params.inviterName}</strong> te ha invitado a colaborar en el proyecto <strong>${params.projectName}</strong> como <strong>${roleLabel}</strong>.</p>
+      <p>Puedes iniciar sesion en la plataforma para comenzar a trabajar con tu equipo.</p>
+      <p>Si no esperabas esta invitacion, simplemente ignora este mensaje.</p>
+    `;
+
+    const isDevEnvironment =
+      (process.env.NODE_ENV ?? '').toLowerCase() === 'development';
+    const isSoftFailEnv = this.isNonCriticalEnvironment();
+
+    try {
+      const result = await this.transporter.sendMail({
+        to: params.to,
+        from: this.config.from,
+        subject,
+        text,
+        html,
+      });
+
+      if (isDevEnvironment) {
+        this.logger.log(`Invitacion enviada a ${params.to}`);
+        this.logger.log(`Preview URL: ${nodemailer.getTestMessageUrl(result)}`);
+      }
+    } catch (error) {
+      this.logger.error('Error sending project invitation email', error as Error);
+      if (isSoftFailEnv) {
+        this.logger.warn(
+          'Error al enviar la invitacion en entorno de desarrollo/test, continuando...',
+        );
         return;
       }
       throw error;

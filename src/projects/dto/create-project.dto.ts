@@ -1,15 +1,20 @@
 import {
-  IsString,
-  IsOptional,
+  ArrayNotEmpty,
+  IsArray,
+  IsDateString,
   IsEnum,
   IsInt,
-  Min,
+  IsOptional,
+  IsString,
   Max,
-  IsDateString,
-  MinLength,
   MaxLength,
+  Min,
+  MinLength,
+  ValidateNested,
 } from 'class-validator';
-import { ProjectVisibility, ProjectStatus } from '@prisma/client';
+import { Type } from 'class-transformer';
+import { ProjectStatus, ProjectVisibility } from '@prisma/client';
+import { ProjectTeamMemberDto } from './project-team-member.dto';
 
 export class CreateProjectDto {
   @IsString()
@@ -17,47 +22,60 @@ export class CreateProjectDto {
   @MaxLength(100, { message: 'El nombre no puede exceder 100 caracteres' })
   name: string;
 
-  @IsOptional()
   @IsString()
-  @MaxLength(500, { message: 'La descripción no puede exceder 500 caracteres' })
-  description?: string;
+  @MinLength(10, { message: 'La descripcion debe tener al menos 10 caracteres' })
+  @MaxLength(500, {
+    message: 'La descripcion no puede exceder 500 caracteres',
+  })
+  description: string;
 
   @IsOptional()
   @IsEnum(ProjectVisibility)
   visibility?: ProjectVisibility;
 
-  @IsOptional()
   @IsString()
-  @MaxLength(500, { message: 'El objetivo del producto no puede exceder 500 caracteres' })
-  productObjective?: string;
+  @MinLength(10, {
+    message: 'El objetivo del producto debe tener al menos 10 caracteres',
+  })
+  @MaxLength(500, {
+    message: 'El objetivo del producto no puede exceder 500 caracteres',
+  })
+  productObjective: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(1000, { message: 'La definición de done no puede exceder 1000 caracteres' })
+  @MaxLength(1000, {
+    message: 'La definicion de done no puede exceder 1000 caracteres',
+  })
   definitionOfDone?: string;
 
-  @IsInt({ message: 'La duración del sprint debe ser un número entero' })
-  @Min(1, { message: 'La duración del sprint debe ser al menos 1 semana' })
-  @Max(4, { message: 'La duración del sprint no puede exceder 4 semanas' })
-  sprintDuration: number;
-
   @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  qualityCriteria?: number;
+  @IsInt({ message: 'La duracion del sprint debe ser un numero entero' })
+  @Min(1, { message: 'La duracion del sprint debe ser al menos 1 semana' })
+  @Max(4, { message: 'La duracion del sprint no puede exceder 4 semanas' })
+  sprintDuration?: number;
+
+  @IsString()
+  @MinLength(5, { message: 'Los criterios de calidad deben ser mas descriptivos' })
+  @MaxLength(500, {
+    message: 'Los criterios de calidad no pueden exceder 500 caracteres',
+  })
+  qualityCriteria: string;
 
   @IsOptional()
   @IsEnum(ProjectStatus)
   status?: ProjectStatus;
 
-  @IsDateString({}, { message: 'La fecha de inicio debe ser válida' })
+  @IsDateString({}, { message: 'La fecha de inicio debe ser valida' })
   startDate: string;
 
   @IsOptional()
-  @IsDateString({}, { message: 'La fecha de fin debe ser válida' })
+  @IsDateString({}, { message: 'La fecha de fin debe ser valida' })
   endDate?: string;
+
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Debe registrar al menos un miembro del equipo' })
+  @ValidateNested({ each: true })
+  @Type(() => ProjectTeamMemberDto)
+  teamMembers: ProjectTeamMemberDto[];
 }
-
-
-

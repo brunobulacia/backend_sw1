@@ -14,6 +14,7 @@ import type { Request as ExpressRequest } from 'express';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { InviteProjectMemberDto } from './dto/invite-project-member.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 interface AuthRequest extends ExpressRequest {
@@ -73,6 +74,23 @@ export class ProjectsController {
     return this.projectsService.update(
       id,
       updateProjectDto,
+      req.user.id,
+      req.user.isAdmin ?? false,
+    );
+  }
+
+  @Post(':id/invite')
+  inviteMember(
+    @Param('id') id: string,
+    @Body() inviteDto: InviteProjectMemberDto,
+    @Request() req: AuthRequest,
+  ) {
+    if (!req.user?.id) {
+      throw new UnauthorizedException();
+    }
+    return this.projectsService.inviteMember(
+      id,
+      inviteDto,
       req.user.id,
       req.user.isAdmin ?? false,
     );

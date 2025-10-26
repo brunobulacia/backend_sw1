@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import { PrismaClient, ProjectMemberRole } from '@prisma/client';
 import request = require('supertest');
 
 export interface TestUser {
@@ -22,6 +23,7 @@ export class TestHelper {
   private regularUser: TestUser | null = null;
   private createdUsers: string[] = [];
   private createdProjects: string[] = [];
+  private prisma = new PrismaClient();
 
   constructor(app: INestApplication) {
     this.app = app;
@@ -61,12 +63,25 @@ export class TestHelper {
     // Por ahora, retornar el usuario regular como admin para propósitos de testing
     // En un entorno real, el primer admin se crea de otra forma (seed, command line, etc.)
     
+    await this.prisma.user.update({
+      where: { id: registerResponse.body.user.id },
+      data: { isAdmin: true },
+    });
+
+    const loginResponse = await request(this.app.getHttpServer())
+      .post('/api/auth/login')
+      .send({
+        email: userData.email,
+        password: userData.password,
+      })
+      .expect(201);
+
     this.adminUser = {
       id: registerResponse.body.user.id,
       email: userData.email,
       username: userData.username,
-      token: registerResponse.body.access_token,
-      isAdmin: true, // Lo marcamos como admin en el test, aunque en BD no lo sea
+      token: loginResponse.body.access_token,
+      isAdmin: true,
     };
 
     return this.adminUser;
@@ -144,27 +159,72 @@ export class TestHelper {
   /**
    * Crea un proyecto de test
    */
-  async createTestProject(ownerToken: string): Promise<TestProject> {
+  async createTestProject(
+    owner: TestUser,
+    options: {
+      teamMembers?: Array<{ userId: string; role: ProjectMemberRole }>;
+      sprintDuration?: number;
+      visibility?: 'PUBLIC' | 'PRIVATE';
+      startDate?: string;
+      endDate?: string;
+      name?: string;
+      description?: string;
+      productObjective?: string;
+      qualityCriteria?: string;
+    } = {},
+  ): Promise<TestProject> {
     const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 10000);
-    const projectData = {
-      code: `PRJ${timestamp}${random}`,
-      name: `Proyecto Test ${timestamp}`,
-      description: 'Proyecto creado para testing',
-      visibility: 'PRIVATE',
-      sprintDuration: 14,
-      startDate: new Date().toISOString(),
+    const defaultName = options.name ?? `Proyecto Test ${timestamp}`;
+    const now = options.startDate ? new Date(options.startDate) : new Date();
+    const endDate =
+      options.endDate ??
+      new Date(now.getTime() + 1000 * 60 * 60 * 24 * 14).toISOString();
+
+    const teamMap = new Map<string, ProjectMemberRole>();
+    if (options.teamMembers) {
+      for (const member of options.teamMembers) {
+        teamMap.set(member.userId, member.role);
+      }
+    }
+    teamMap.set(owner.id, ProjectMemberRole.PRODUCT_OWNER);
+
+    const teamMembers = Array.from(teamMap.entries()).map(
+      ([userId, role]) => ({
+        userId,
+        role,
+      }),
+    );
+
+    const projectData: Record<string, unknown> = {
+      name: defaultName,
+      description:
+        options.description ??
+        'Proyecto creado automaticamente para escenarios de prueba',
+      productObjective:
+        options.productObjective ??
+        'Verificar el cumplimiento de la historia de usuario para proyectos Scrum',
+      qualityCriteria:
+        options.qualityCriteria ??
+        'Pruebas automatizadas ejecutadas y revisiones de codigo semanales',
+      visibility: options.visibility ?? 'PRIVATE',
+      startDate: (options.startDate ?? now.toISOString()),
+      endDate,
+      teamMembers,
     };
+
+    if (options.sprintDuration !== undefined) {
+      projectData.sprintDuration = options.sprintDuration;
+    }
 
     const response = await request(this.app.getHttpServer())
       .post('/api/projects')
-      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Authorization', `Bearer ${owner.token}`)
       .send(projectData)
       .expect(201);
 
-    this.createdProjects.push(response.body.id);
+    this.createdProjects.push(response.body.project.id);
 
-    return response.body;
+    return response.body.project;
   }
 
   /**
@@ -195,34 +255,33 @@ export class TestHelper {
    * Limpia todos los recursos creados durante los tests
    */
   async cleanup() {
-    // Eliminar proyectos creados
-    if (this.adminUser) {
-      for (const projectId of this.createdProjects) {
-        try {
-          await request(this.app.getHttpServer())
-            .delete(`/api/projects/${projectId}`)
-            .set('Authorization', `Bearer ${this.adminUser.token}`);
-        } catch (error) {
-          // Ignorar errores de limpieza
-        }
+    try {
+      if (this.createdProjects.length > 0) {
+        await this.prisma.projectMember.deleteMany({
+          where: { projectId: { in: this.createdProjects } },
+        });
+        await this.prisma.project.deleteMany({
+          where: { id: { in: this.createdProjects } },
+        });
       }
 
-      // Eliminar usuarios creados
-      for (const userId of this.createdUsers) {
-        try {
-          await request(this.app.getHttpServer())
-            .delete(`/api/users/${userId}`)
-            .set('Authorization', `Bearer ${this.adminUser.token}`);
-        } catch (error) {
-          // Ignorar errores de limpieza
-        }
+      if (this.createdUsers.length > 0) {
+        await this.prisma.projectMember.deleteMany({
+          where: { userId: { in: this.createdUsers } },
+        });
+        await this.prisma.user.deleteMany({
+          where: { id: { in: this.createdUsers } },
+        });
       }
+    } catch (error) {
+      // No interrumpir el cierre de la app durante los tests
     }
 
     this.createdUsers = [];
     this.createdProjects = [];
     this.adminUser = null;
     this.regularUser = null;
+    await this.prisma.$disconnect();
   }
 
   /**

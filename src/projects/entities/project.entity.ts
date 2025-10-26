@@ -9,7 +9,7 @@ export class ProjectEntity implements Project {
   productObjective: string | null;
   definitionOfDone: string | null;
   sprintDuration: number;
-  qualityCriteria: number | null;
+  qualityCriteria: string | null;
   status: 'PLANNING' | 'ACTIVE' | 'ON_HOLD' | 'COMPLETED' | 'ARCHIVED';
   startDate: Date;
   endDate: Date | null;

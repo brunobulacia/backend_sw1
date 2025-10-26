@@ -1,43 +1,93 @@
 import {
-  Injectable,
-  NotFoundException,
+  BadRequestException,
   ConflictException,
   ForbiddenException,
-  BadRequestException,
+  Injectable,
+  NotFoundException,
 } from '@nestjs/common';
+import { Prisma, ProjectMemberRole } from '@prisma/client';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { ProjectTeamMemberDto } from './dto/project-team-member.dto';
+import { InviteProjectMemberDto } from './dto/invite-project-member.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, Project } from '@prisma/client';
+import { MailerService } from 'src/mailer/mailer.service';
+
+const BASE_USER_SELECT = {
+  id: true,
+  email: true,
+  username: true,
+  firstName: true,
+  lastName: true,
+} as const;
+
+const PROJECT_DETAILS_INCLUDE = {
+  owner: { select: BASE_USER_SELECT },
+  members: {
+    include: {
+      user: { select: BASE_USER_SELECT },
+    },
+  },
+} as const;
+
+const PROJECT_SUMMARY_INCLUDE = {
+  owner: { select: BASE_USER_SELECT },
+  _count: {
+    select: {
+      members: true,
+      stories: true,
+    },
+  },
+} as const;
+
+type ProjectWithDetails = Prisma.ProjectGetPayload<{
+  include: typeof PROJECT_DETAILS_INCLUDE;
+}>;
+
+type ProjectSummary = Prisma.ProjectGetPayload<{
+  include: typeof PROJECT_SUMMARY_INCLUDE;
+}>;
+
+type ProjectMemberWithUser = Prisma.ProjectMemberGetPayload<{
+  include: { user: { select: typeof BASE_USER_SELECT } };
+}>;
+
+const DEFAULT_SPRINT_DURATION_WEEKS = 2;
 
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly mailerService: MailerService,
+  ) {}
 
   /**
-   * Genera un código único para el proyecto basado en las siglas del nombre y el año
+   * Genera un codigo unico para el proyecto basado en las siglas del nombre y el anio.
    * Formato: [SIGLAS]-YYYY (ej: SGP-2025)
    */
   private async generateProjectCode(name: string): Promise<string> {
     const year = new Date().getFullYear();
-    
-    // Extraer siglas del nombre (primeras letras de cada palabra)
     const words = name.trim().split(/\s+/);
+
     let initials = '';
-    
-    if (words.length === 1) {
-      // Si es una sola palabra, tomar las primeras 3 letras
-      initials = words[0].substring(0, 3).toUpperCase();
-    } else {
-      // Si son múltiples palabras, tomar la primera letra de cada una (máximo 4)
-      initials = words
-        .slice(0, 4)
-        .map(word => word[0])
-        .join('')
-        .toUpperCase();
+    const collectedInitials: string[] = [];
+    for (const word of words) {
+      const firstLetter = word.match(/[a-zA-Z]/);
+      if (firstLetter) {
+        collectedInitials.push(firstLetter[0].toUpperCase());
+      }
+      if (collectedInitials.length === 4) {
+        break;
+      }
     }
 
-    // Buscar si ya existe un proyecto con este código base
+    if (collectedInitials.length > 0) {
+      initials = collectedInitials.join('');
+    } else {
+      const fallbackLetters = name.replace(/[^a-zA-Z]/g, '');
+      initials = fallbackLetters.slice(0, 3).toUpperCase() || 'PRJ';
+    }
+
     const baseCode = `${initials}-${year}`;
     const existingProject = await this.prismaService.project.findUnique({
       where: { code: baseCode },
@@ -47,124 +97,242 @@ export class ProjectsService {
       return baseCode;
     }
 
-    // Si ya existe, agregar un sufijo numérico
     let counter = 1;
     let newCode = `${initials}-${year}-${counter}`;
-    
-    while (await this.prismaService.project.findUnique({ where: { code: newCode } })) {
-      counter++;
+
+    // Buscar un sufijo disponible
+    // eslint-disable-next-line no-await-in-loop
+    while (
+      await this.prismaService.project.findUnique({
+        where: { code: newCode },
+      })
+    ) {
+      counter += 1;
       newCode = `${initials}-${year}-${counter}`;
     }
 
     return newCode;
   }
 
-  /**
-   * Crea un nuevo proyecto Scrum
-   * Solo puede ser creado por el usuario autenticado (se convierte en owner)
-   */
+  private normalizeOptionalField(value?: string | null): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private async buildTeamAssignments(
+    rawMembers: ProjectTeamMemberDto[],
+    currentOwnerId: string,
+    allowOwnerChange: boolean,
+  ): Promise<{
+    assignments: Array<{ userId: string; role: ProjectMemberRole }>;
+    nextOwnerId: string;
+  }> {
+    const assignments = new Map<string, ProjectMemberRole>();
+    let requestedOwnerId: string | null = null;
+
+    for (const member of rawMembers) {
+      const trimmedId = member.userId.trim();
+      if (!trimmedId) {
+        throw new BadRequestException(
+          'Todos los miembros del equipo deben incluir un identificador valido.',
+        );
+      }
+
+      if (assignments.has(trimmedId)) {
+        throw new ConflictException(
+          'El equipo contiene miembros duplicados. Verifica los integrantes seleccionados.',
+        );
+      }
+
+      assignments.set(trimmedId, member.role);
+
+      if (member.role === ProjectMemberRole.PRODUCT_OWNER) {
+        if (requestedOwnerId && requestedOwnerId !== trimmedId) {
+          throw new ConflictException(
+            'Solo puede existir un Product Owner en el equipo.',
+          );
+        }
+        requestedOwnerId = trimmedId;
+      }
+    }
+
+    if (!allowOwnerChange) {
+      if (requestedOwnerId && requestedOwnerId !== currentOwnerId) {
+        throw new ForbiddenException(
+          'El creador del proyecto debe permanecer como Product Owner al crear el proyecto.',
+        );
+      }
+      requestedOwnerId = currentOwnerId;
+    } else {
+      if (!requestedOwnerId) {
+        requestedOwnerId = currentOwnerId;
+      }
+    }
+
+    assignments.set(requestedOwnerId, ProjectMemberRole.PRODUCT_OWNER);
+
+    const scrumMasters = Array.from(assignments.entries()).filter(
+      ([, role]) => role === ProjectMemberRole.SCRUM_MASTER,
+    );
+
+    if (scrumMasters.length > 1) {
+      throw new ConflictException(
+        'Solo puede existir un Scrum Master activo en el equipo.',
+      );
+    }
+
+    const memberIds = Array.from(assignments.keys());
+
+    const users = await this.prismaService.user.findMany({
+      where: { id: { in: memberIds } },
+    });
+
+    if (users.length !== memberIds.length) {
+      const foundIds = new Set(users.map((user) => user.id));
+      const missing = memberIds.filter((id) => !foundIds.has(id));
+      throw new NotFoundException(
+        `No se encontraron usuarios con los identificadores: ${missing.join(
+          ', ',
+        )}`,
+      );
+    }
+
+    const now = new Date();
+    for (const user of users) {
+      if (!user.isActive) {
+        throw new ForbiddenException(
+          `El usuario ${user.email} esta inactivo y no puede ser agregado al proyecto.`,
+        );
+      }
+      if (user.lockedUntil && user.lockedUntil > now) {
+        throw new ForbiddenException(
+          `El usuario ${user.email} no posee permisos vigentes para unirse al proyecto.`,
+        );
+      }
+    }
+
+    const normalizedAssignments = memberIds.map((userId) => ({
+      userId,
+      role: assignments.get(userId)!,
+    }));
+
+    return {
+      assignments: normalizedAssignments,
+      nextOwnerId: requestedOwnerId,
+    };
+  }
+
+  private ensureValidSchedule(startDate: Date, endDate: Date | null): void {
+    if (endDate && endDate <= startDate) {
+      throw new BadRequestException(
+        'La fecha estimada de finalizacion debe ser posterior a la fecha de inicio.',
+      );
+    }
+  }
+
   async create(
     createProjectDto: CreateProjectDto,
     userId: string,
-  ): Promise<Project> {
-    // Validar que el usuario existe y está activo
-    const user = await this.prismaService.user.findUnique({
+  ): Promise<{ message: string; project: ProjectWithDetails }> {
+    const requester = await this.prismaService.user.findUnique({
       where: { id: userId },
     });
 
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
+    if (!requester) {
+      throw new NotFoundException('Usuario no encontrado.');
     }
 
-    if (!user.isActive) {
-      throw new ForbiddenException('Usuario inactivo');
+    if (!requester.isActive) {
+      throw new ForbiddenException(
+        'El usuario autenticado esta inactivo y no puede crear proyectos.',
+      );
     }
 
-    // Validar fechas
+    const name = createProjectDto.name.trim();
+    const description = createProjectDto.description.trim();
+    const productObjective = createProjectDto.productObjective.trim();
+    const qualityCriteria = createProjectDto.qualityCriteria.trim();
+
+    const existingByName = await this.prismaService.project.findUnique({
+      where: { name },
+    });
+
+    if (existingByName) {
+      throw new ConflictException(
+        'Ya existe un proyecto con el mismo nombre. Debe ser unico.',
+      );
+    }
+
     const startDate = new Date(createProjectDto.startDate);
     const endDate = createProjectDto.endDate
       ? new Date(createProjectDto.endDate)
       : null;
 
-    if (endDate && endDate <= startDate) {
-      throw new BadRequestException(
-        'La fecha de fin debe ser posterior a la fecha de inicio',
-      );
-    }
+    this.ensureValidSchedule(startDate, endDate);
 
-    // Generar código único del proyecto
-    const code = await this.generateProjectCode(createProjectDto.name);
+    const sprintDuration =
+      createProjectDto.sprintDuration ?? DEFAULT_SPRINT_DURATION_WEEKS;
 
-    try {
-      const project = await this.prismaService.project.create({
+    const { assignments: teamAssignments } = await this.buildTeamAssignments(
+      createProjectDto.teamMembers,
+      userId,
+      false,
+    );
+
+    const code = await this.generateProjectCode(name);
+
+    const project = await this.prismaService.$transaction(async (tx) => {
+      const createdProject = await tx.project.create({
         data: {
-          ...createProjectDto,
           code,
+          name,
+          description,
+          visibility: createProjectDto.visibility ?? 'PRIVATE',
+          productObjective,
+          definitionOfDone: this.normalizeOptionalField(
+            createProjectDto.definitionOfDone,
+          ),
+          sprintDuration,
+          qualityCriteria,
+          status: createProjectDto.status ?? 'PLANNING',
           startDate,
           endDate,
           ownerId: userId,
-          visibility: createProjectDto.visibility ?? 'PRIVATE',
-          status: createProjectDto.status ?? 'PLANNING',
-        },
-        include: {
-          owner: {
-            select: {
-              id: true,
-              email: true,
-              username: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
         },
       });
 
-      return project;
-    } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
-      ) {
-        throw new ConflictException('Ya existe un proyecto con ese código');
-      }
-      throw e;
-    }
+      await tx.projectMember.createMany({
+        data: teamAssignments.map((member) => ({
+          projectId: createdProject.id,
+          userId: member.userId,
+          role: member.role,
+          isActive: true,
+        })),
+      });
+
+      return tx.project.findUniqueOrThrow({
+        where: { id: createdProject.id },
+        include: PROJECT_DETAILS_INCLUDE,
+      });
+    });
+
+    return {
+      message: 'Proyecto creado exitosamente',
+      project,
+    };
   }
 
-  /**
-   * Obtiene todos los proyectos
-   * Los usuarios pueden ver:
-   * - Proyectos públicos
-   * - Proyectos donde son owner
-   * - Proyectos donde son miembros
-   * Los admins ven todos
-   */
-  async findAll(userId: string, isAdmin: boolean): Promise<Project[]> {
+  async findAll(userId: string, isAdmin: boolean): Promise<ProjectSummary[]> {
     if (isAdmin) {
-      // Los admins ven todos los proyectos
       return this.prismaService.project.findMany({
-        include: {
-          owner: {
-            select: {
-              id: true,
-              email: true,
-              username: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-          _count: {
-            select: {
-              members: true,
-              stories: true,
-            },
-          },
-        },
+        include: PROJECT_SUMMARY_INCLUDE,
         orderBy: { createdAt: 'desc' },
       });
     }
 
-    // Usuarios normales ven proyectos públicos, propios o donde son miembros
     return this.prismaService.project.findMany({
       where: {
         OR: [
@@ -173,76 +341,27 @@ export class ProjectsService {
           { members: { some: { userId } } },
         ],
       },
-      include: {
-        owner: {
-          select: {
-            id: true,
-            email: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-        _count: {
-          select: {
-            members: true,
-            stories: true,
-          },
-        },
-      },
+      include: PROJECT_SUMMARY_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  /**
-   * Obtiene un proyecto por ID
-   * Verifica permisos de acceso
-   */
   async findOne(
     id: string,
     userId: string,
     isAdmin: boolean,
-  ): Promise<Project> {
+  ): Promise<ProjectWithDetails> {
     const project = await this.prismaService.project.findUnique({
       where: { id },
-      include: {
-        owner: {
-          select: {
-            id: true,
-            email: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-        members: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
-                username: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-            role: true,
-          },
-        },
-        _count: {
-          select: {
-            stories: true,
-            estimationSessions: true,
-          },
-        },
-      },
+      include: PROJECT_DETAILS_INCLUDE,
     });
 
     if (!project) {
-      throw new NotFoundException(`Proyecto con id ${id} no encontrado`);
+      throw new NotFoundException(
+        `Proyecto con identificador ${id} no encontrado.`,
+      );
     }
 
-    // Verificar permisos
     const hasAccess =
       isAdmin ||
       project.visibility === 'PUBLIC' ||
@@ -250,38 +369,37 @@ export class ProjectsService {
       project.members.some((member) => member.userId === userId);
 
     if (!hasAccess) {
-      throw new ForbiddenException('No tienes acceso a este proyecto');
+      throw new ForbiddenException('No tienes acceso a este proyecto.');
     }
 
     return project;
   }
 
-  /**
-   * Actualiza un proyecto
-   * Solo el owner o admins pueden actualizar
-   */
   async update(
     id: string,
     updateProjectDto: UpdateProjectDto,
     userId: string,
     isAdmin: boolean,
-  ): Promise<Project> {
+  ): Promise<ProjectWithDetails> {
     const project = await this.prismaService.project.findUnique({
       where: { id },
+      include: {
+        members: true,
+      },
     });
 
     if (!project) {
-      throw new NotFoundException(`Proyecto con id ${id} no encontrado`);
-    }
-
-    // Solo el owner o admins pueden actualizar
-    if (!isAdmin && project.ownerId !== userId) {
-      throw new ForbiddenException(
-        'Solo el propietario del proyecto o administradores pueden actualizarlo',
+      throw new NotFoundException(
+        `Proyecto con identificador ${id} no encontrado.`,
       );
     }
 
-    // Validar fechas si se actualizan
+    if (!isAdmin && project.ownerId !== userId) {
+      throw new ForbiddenException(
+        'Solo el Product Owner del proyecto o un administrador pueden actualizarlo.',
+      );
+    }
+
     if (updateProjectDto.startDate || updateProjectDto.endDate) {
       const startDate = updateProjectDto.startDate
         ? new Date(updateProjectDto.startDate)
@@ -289,114 +407,328 @@ export class ProjectsService {
       const endDate = updateProjectDto.endDate
         ? new Date(updateProjectDto.endDate)
         : project.endDate;
+      this.ensureValidSchedule(startDate, endDate);
+    }
 
-      if (endDate && endDate <= startDate) {
+    const { teamMembers, ...projectFields } = updateProjectDto;
+
+    if (teamMembers && project.ownerId !== userId) {
+      throw new ForbiddenException(
+        'Solo el Product Owner del proyecto puede asignar o editar los roles del equipo.',
+      );
+    }
+
+    const sprintDuration =
+      projectFields.sprintDuration ?? project.sprintDuration;
+    if (projectFields.sprintDuration) {
+      if (
+        projectFields.sprintDuration < 1 ||
+        projectFields.sprintDuration > 4
+      ) {
         throw new BadRequestException(
-          'La fecha de fin debe ser posterior a la fecha de inicio',
+          'La duracion del sprint debe estar entre 1 y 4 semanas.',
         );
       }
     }
 
-    const data: Prisma.ProjectUpdateInput = { ...updateProjectDto };
+    const projectData: Prisma.ProjectUpdateInput = {};
 
-    // Convertir fechas si están presentes
-    if (updateProjectDto.startDate) {
-      data.startDate = new Date(updateProjectDto.startDate);
+    if (projectFields.name) {
+      projectData.name = projectFields.name.trim();
     }
-    if (updateProjectDto.endDate) {
-      data.endDate = new Date(updateProjectDto.endDate);
+    if (projectFields.description !== undefined) {
+      projectData.description = projectFields.description.trim();
+    }
+    if (projectFields.visibility !== undefined) {
+      projectData.visibility = projectFields.visibility;
+    }
+    if (projectFields.productObjective !== undefined) {
+      projectData.productObjective = projectFields.productObjective.trim();
+    }
+    if (projectFields.definitionOfDone !== undefined) {
+      projectData.definitionOfDone = this.normalizeOptionalField(
+        projectFields.definitionOfDone,
+      );
+    }
+    if (projectFields.qualityCriteria !== undefined) {
+      projectData.qualityCriteria = projectFields.qualityCriteria.trim();
+    }
+    if (projectFields.status !== undefined) {
+      projectData.status = projectFields.status;
+    }
+    if (projectFields.startDate) {
+      projectData.startDate = new Date(projectFields.startDate);
+    }
+    if (projectFields.endDate !== undefined) {
+      projectData.endDate = projectFields.endDate
+        ? new Date(projectFields.endDate)
+        : null;
+    }
+    projectData.sprintDuration = sprintDuration;
+
+    let teamAssignmentsResult:
+      | {
+          assignments: Array<{ userId: string; role: ProjectMemberRole }>;
+          nextOwnerId: string;
+        }
+      | null = null;
+
+    if (teamMembers) {
+      teamAssignmentsResult = await this.buildTeamAssignments(
+        teamMembers,
+        project.ownerId,
+        true,
+      );
+      if (teamAssignmentsResult.nextOwnerId !== project.ownerId) {
+        projectData.owner = {
+          connect: { id: teamAssignmentsResult.nextOwnerId },
+        };
+      }
     }
 
-    try {
-      return await this.prismaService.project.update({
+    const result = await this.prismaService.$transaction(async (tx) => {
+      await tx.project.update({
         where: { id },
-        data,
-        include: {
-          owner: {
-            select: {
-              id: true,
-              email: true,
-              username: true,
-              firstName: true,
-              lastName: true,
+        data: projectData,
+      });
+
+      if (teamAssignmentsResult) {
+        const memberIds = teamAssignmentsResult.assignments.map(
+          (member) => member.userId,
+        );
+
+        await tx.projectMember.deleteMany({
+          where: {
+            projectId: id,
+            userId: { notIn: memberIds },
+          },
+        });
+
+        for (const member of teamAssignmentsResult.assignments) {
+          await tx.projectMember.upsert({
+            where: {
+              projectId_userId: {
+                projectId: id,
+                userId: member.userId,
+              },
             },
+            update: {
+              role: member.role,
+              isActive: true,
+            },
+            create: {
+              projectId: id,
+              userId: member.userId,
+              role: member.role,
+              isActive: true,
+            },
+          });
+        }
+      }
+
+      return tx.project.findUniqueOrThrow({
+        where: { id },
+        include: PROJECT_DETAILS_INCLUDE,
+      });
+    });
+
+    return result;
+  }
+
+  async inviteMember(
+    projectId: string,
+    inviteDto: InviteProjectMemberDto,
+    inviterId: string,
+    isAdmin: boolean,
+  ): Promise<{ message: string; member: ProjectMemberWithUser }> {
+    const project = await this.prismaService.project.findUnique({
+      where: { id: projectId },
+      include: {
+        owner: { select: BASE_USER_SELECT },
+      },
+    });
+
+    if (!project) {
+      throw new NotFoundException(
+        `Proyecto con identificador ${projectId} no encontrado.`,
+      );
+    }
+
+    if (!isAdmin && project.ownerId !== inviterId) {
+      throw new ForbiddenException(
+        'Solo el Product Owner del proyecto puede invitar miembros.',
+      );
+    }
+
+    const normalizedEmail = inviteDto.email.trim().toLowerCase();
+    const userToInvite = await this.prismaService.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (!userToInvite) {
+      throw new NotFoundException(
+        `No existe un usuario registrado con el correo ${inviteDto.email}.`,
+      );
+    }
+
+    if (!userToInvite.isActive) {
+      throw new ForbiddenException(
+        'El usuario invitado se encuentra inactivo y no puede unirse al proyecto.',
+      );
+    }
+
+    const now = new Date();
+    if (userToInvite.lockedUntil && userToInvite.lockedUntil > now) {
+      throw new ForbiddenException(
+        'El usuario invitado no posee permisos vigentes para unirse al proyecto.',
+      );
+    }
+
+    if (
+      inviteDto.role === ProjectMemberRole.PRODUCT_OWNER &&
+      userToInvite.id !== project.ownerId
+    ) {
+      throw new ForbiddenException(
+        'Solo el propietario del proyecto puede tener el rol de Product Owner.',
+      );
+    }
+
+    if (inviteDto.role === ProjectMemberRole.SCRUM_MASTER) {
+      const existingScrumMaster =
+        await this.prismaService.projectMember.findFirst({
+          where: {
+            projectId,
+            role: ProjectMemberRole.SCRUM_MASTER,
+            isActive: true,
+            userId: { not: userToInvite.id },
+          },
+        });
+
+      if (existingScrumMaster) {
+        throw new ConflictException(
+          'Solo puede existir un Scrum Master activo en el equipo.',
+        );
+      }
+    }
+
+    const existingMember =
+      await this.prismaService.projectMember.findUnique({
+        where: {
+          projectId_userId: {
+            projectId,
+            userId: userToInvite.id,
           },
         },
       });
-    } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
-      ) {
-        throw new ConflictException('Ya existe un proyecto con ese código');
-      }
-      throw e;
+
+    if (existingMember?.isActive) {
+      throw new ConflictException(
+        'El usuario ya forma parte del equipo del proyecto.',
+      );
     }
+
+    const member = existingMember
+      ? await this.prismaService.projectMember.update({
+          where: {
+            projectId_userId: {
+              projectId,
+              userId: userToInvite.id,
+            },
+          },
+          data: {
+            role: inviteDto.role,
+            isActive: true,
+            joinedAt: new Date(),
+          },
+          include: {
+            user: { select: BASE_USER_SELECT },
+          },
+        })
+      : await this.prismaService.projectMember.create({
+          data: {
+            projectId,
+            userId: userToInvite.id,
+            role: inviteDto.role,
+            isActive: true,
+          },
+          include: {
+            user: { select: BASE_USER_SELECT },
+          },
+        });
+
+    const inviter =
+      inviterId === project.ownerId
+        ? project.owner
+        : await this.prismaService.user.findUnique({
+            where: { id: inviterId },
+            select: BASE_USER_SELECT,
+          });
+
+    const inviterNameCandidates = [
+      inviter?.firstName,
+      inviter?.lastName,
+    ].filter((value) => value && value.trim().length > 0);
+
+    const inviterDisplayName =
+      inviterNameCandidates.length > 0
+        ? inviterNameCandidates.join(' ').trim()
+        : inviter?.username || inviter?.email || 'Un miembro del equipo';
+
+    await this.mailerService.sendProjectInvitationEmail({
+      to: userToInvite.email,
+      projectName: project.name,
+      role: inviteDto.role,
+      inviterName: inviterDisplayName,
+    });
+
+    return {
+      message: `Se envió la invitación a ${userToInvite.email}`,
+      member,
+    };
   }
 
-  /**
-   * Elimina (archiva) un proyecto
-   * Solo el owner o admins pueden eliminar
-   */
   async remove(
     id: string,
     userId: string,
     isAdmin: boolean,
-  ): Promise<Project> {
+  ): Promise<ProjectSummary> {
     const project = await this.prismaService.project.findUnique({
       where: { id },
     });
 
     if (!project) {
-      throw new NotFoundException(`Proyecto con id ${id} no encontrado`);
-    }
-
-    // Solo el owner o admins pueden eliminar
-    if (!isAdmin && project.ownerId !== userId) {
-      throw new ForbiddenException(
-        'Solo el propietario del proyecto o administradores pueden eliminarlo',
+      throw new NotFoundException(
+        `Proyecto con identificador ${id} no encontrado.`,
       );
     }
 
-    // En lugar de eliminar, archivamos el proyecto
-    return await this.prismaService.project.update({
+    if (!isAdmin && project.ownerId !== userId) {
+      throw new ForbiddenException(
+        'Solo el Product Owner del proyecto o un administrador pueden archivarlo.',
+      );
+    }
+
+    await this.prismaService.project.update({
       where: { id },
       data: {
         status: 'ARCHIVED',
         archivedAt: new Date(),
       },
     });
+
+    return this.prismaService.project.findUniqueOrThrow({
+      where: { id },
+      include: PROJECT_SUMMARY_INCLUDE,
+    });
   }
 
-  /**
-   * Obtiene proyectos del usuario (owner o miembro)
-   */
-  async findUserProjects(userId: string): Promise<Project[]> {
+  async findUserProjects(userId: string): Promise<ProjectSummary[]> {
     return this.prismaService.project.findMany({
       where: {
         OR: [{ ownerId: userId }, { members: { some: { userId } } }],
       },
-      include: {
-        owner: {
-          select: {
-            id: true,
-            email: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-        _count: {
-          select: {
-            members: true,
-            stories: true,
-          },
-        },
-      },
+      include: PROJECT_SUMMARY_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
 }
-
-
-
