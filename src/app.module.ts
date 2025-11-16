@@ -6,10 +6,17 @@ import { StoriesModule } from './stories/stories.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { EstimationModule } from './estimation/estimation.module';
+import { AppController } from './app.controller';
 
 @Module({
-  imports: [UsersModule, AuthModule, ProjectsModule, StoriesModule, EstimationModule],
-  controllers: [],
+  imports: [
+    UsersModule,
+    AuthModule,
+    ProjectsModule,
+    StoriesModule,
+    EstimationModule,
+  ],
+  controllers: [AppController],
   providers: [
     {
       //PARA PONER EL GUARD DE JWT EN TODOS LOS ENDPOINTS PERRITOUUUU
