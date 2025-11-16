@@ -1,13 +1,14 @@
-FROM node:22
+# Build stage
+FROM node:22 AS builder
 
 WORKDIR /usr/src/app
 
-# Copy package files and install dependencies
+# Copy package files
 COPY package*.json ./
 COPY prisma ./prisma
 
-# Install dependencies
-RUN npm ci --only=production
+# Install all dependencies (including dev dependencies for build)
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -17,6 +18,25 @@ RUN npx prisma generate
 
 # Build the application
 RUN npm run build
+
+# Production stage
+FROM node:22
+
+WORKDIR /usr/src/app
+
+# Copy package files
+COPY package*.json ./
+COPY prisma ./prisma
+
+# Install only production dependencies
+RUN npm ci --only=production
+
+# Copy built application from builder stage
+COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/node_modules/.prisma ./node_modules/.prisma
+
+# Generate Prisma client for production
+RUN npx prisma generate
 
 # Expose port
 EXPOSE 8000
