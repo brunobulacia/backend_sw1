@@ -9,6 +9,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateStoryDto } from './dto/create-story.dto';
 import { UpdateStoryDto } from './dto/update-story.dto';
 import { ReorderStoriesDto } from './dto/reorder-stories.dto';
+import { CreateTaskForStoryDto } from './dto/create-task-for-story.dto';
+import { UpdateTaskForStoryDto } from './dto/update-task-for-story.dto';
 
 type StoryWithTags = Prisma.UserStoryGetPayload<{
   include: { tags: true };
@@ -330,5 +332,172 @@ export class StoriesService {
     });
 
     return this.findAll(projectId, userId);
+  }
+
+  /**
+   * Obtener tareas de una historia
+   */
+  async getStoryTasks(projectId: string, storyId: string, userId: string) {
+    await this.ensureProjectOwner(projectId, userId);
+
+    const story = await this.prisma.userStory.findFirst({
+      where: { id: storyId, projectId },
+    });
+
+    if (!story) {
+      throw new NotFoundException('Historia no encontrada');
+    }
+
+    const tasks = await this.prisma.task.findMany({
+      where: { storyId },
+      include: {
+        assignedTo: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return tasks;
+  }
+
+  /**
+   * Crear tarea para una historia
+   */
+  async createTaskForStory(
+    projectId: string,
+    storyId: string,
+    dto: CreateTaskForStoryDto,
+    userId: string,
+  ) {
+    await this.ensureProjectOwner(projectId, userId);
+
+    const story = await this.prisma.userStory.findFirst({
+      where: { id: storyId, projectId },
+      include: {
+        tasks: true,
+      },
+    });
+
+    if (!story) {
+      throw new NotFoundException('Historia no encontrada');
+    }
+
+    // Generar código de tarea
+    const taskCount = story.tasks.length;
+    const taskCode = `T-${story.code}-${taskCount + 1}`;
+
+    const task = await this.prisma.task.create({
+      data: {
+        storyId,
+        code: taskCode,
+        title: dto.title,
+        description: dto.description,
+        effort: dto.effort,
+        assignedToId: dto.assignedToId,
+        status: 'TODO',
+      },
+      include: {
+        assignedTo: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    return task;
+  }
+
+  /**
+   * Actualizar tarea de una historia
+   */
+  async updateTaskForStory(
+    projectId: string,
+    storyId: string,
+    taskId: string,
+    dto: UpdateTaskForStoryDto,
+    userId: string,
+  ) {
+    await this.ensureProjectOwner(projectId, userId);
+
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, storyId },
+      include: { story: true },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Tarea no encontrada');
+    }
+
+    if (task.story.projectId !== projectId) {
+      throw new ForbiddenException('No tienes acceso a esta tarea');
+    }
+
+    // Actualizar la tarea específica
+    const updated = await this.prisma.task.update({
+      where: { id: taskId },
+      data: {
+        title: dto.title,
+        description: dto.description,
+        effort: dto.effort,
+        assignedToId: dto.assignedToId,
+        status: dto.status,
+      },
+      include: {
+        assignedTo: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Eliminar tarea de una historia
+   */
+  async deleteTaskForStory(
+    projectId: string,
+    storyId: string,
+    taskId: string,
+    userId: string,
+  ) {
+    await this.ensureProjectOwner(projectId, userId);
+
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, storyId },
+      include: { story: true },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Tarea no encontrada');
+    }
+
+    if (task.story.projectId !== projectId) {
+      throw new ForbiddenException('No tienes acceso a esta tarea');
+    }
+
+    await this.prisma.task.delete({
+      where: { id: taskId },
+    });
+
+    return { message: 'Tarea eliminada correctamente' };
   }
 }

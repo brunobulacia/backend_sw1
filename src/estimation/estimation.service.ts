@@ -346,7 +346,7 @@ export class EstimationService{
         //actualizar la sesion
         await this.prisma.estimationSession.update({
             where: { id: sessionId },
-            data: {isRevealed: false, currentRound: newRoundNumber },
+            data: {isRevealed: false },
         });
 
         return {
@@ -492,7 +492,7 @@ export class EstimationService{
             select: { roundNumber: true },
         });
 
-        const currentRound = session.currentRound;
+        const currentRound = maxRoundVote?.roundNumber || 1;
         let votes: Array<{
         id: string;
         voteValue: string;

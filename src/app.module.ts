@@ -6,6 +6,9 @@ import { StoriesModule } from './stories/stories.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { EstimationModule } from './estimation/estimation.module';
+import { KanbanModule } from './kanban/kanban.module';
+import { ProjectConfigModule } from './project-config/project-config.module';
+import { SprintModule } from './sprint/sprint.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -15,6 +18,9 @@ import { AppController } from './app.controller';
     ProjectsModule,
     StoriesModule,
     EstimationModule,
+    KanbanModule,
+    ProjectConfigModule,
+    SprintModule,
   ],
   controllers: [AppController],
   providers: [

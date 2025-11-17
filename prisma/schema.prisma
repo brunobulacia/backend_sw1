@@ -1,5 +1,5 @@
 // ------------------------------------------------------------
-// Prisma schema from your ERD (English, PostgreSQL)
+// Prisma schema - Scrum Planning Poker & Project Management
 // ------------------------------------------------------------
 generator client {
   provider = "prisma-client-js"
@@ -53,35 +53,55 @@ enum SessionStatus {
   CLOSED
 }
 
+enum SprintStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  TESTING
+  DONE
+  CANCELLED
+}
+
 // ------------------------- Models ---------------------------
 
 model User {
-  id             String    @id @default(uuid()) @db.Uuid
-  email          String    @unique
-  username       String    @unique
-  password       String
-  firstName      String
-  lastName       String
-  timezone       String
-  isActive       Boolean   @default(true)
-  isAdmin        Boolean   @default(false)
-  lastLogin      DateTime?
-  failedAttempts Int       @default(0)
-  lockedUntil    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique
+  username          String    @unique
+  password          String
+  firstName         String
+  lastName          String
+  timezone          String
+  isActive          Boolean   @default(true)
+  isAdmin           Boolean   @default(false)
+  lastLogin         DateTime?
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
   passwordChangedAt DateTime?
-  tokenVersion   Int       @default(0)
+  tokenVersion      Int       @default(0)
 
   // Relations
-  ownedProjects     Project[]           @relation("ProjectOwner")
-  memberships       ProjectMember[]
-  createdRoles      Role[]              @relation("RoleCreator")
-  moderatedSessions EstimationSession[] @relation("SessionModerator")
-  estimationVotes   EstimationVote[]
-  passwordResetTokens PasswordResetToken[]
-  requestedPasswordResets PasswordResetToken[] @relation("PasswordResetAdmin")
-  passwordResetRequests PasswordResetRequest[]
+  ownedProjects           Project[]              @relation("ProjectOwner")
+  memberships             ProjectMember[]
+  createdRoles            Role[]                 @relation("RoleCreator")
+  moderatedSessions       EstimationSession[]    @relation("SessionModerator")
+  estimationVotes         EstimationVote[]
+  passwordResetTokens     PasswordResetToken[]
+  requestedPasswordResets PasswordResetToken[]   @relation("PasswordResetAdmin")
+  passwordResetRequests   PasswordResetRequest[]
+
+  // New relations
+  assignedTasks    Task[]
+  taskActivityLogs TaskActivityLog[]
+  dailyScrums      DailyScrum[]
 }
 
 model Project {
@@ -111,8 +131,12 @@ model Project {
   configs            ProjectConfig[]
   estimationSessions EstimationSession[]
 
-  @@index([ownerId])
+  // New relations
+  sprints      Sprint[]
+  repositories Repository[]
+
   @@unique([name])
+  @@index([ownerId])
   @@index([status, visibility])
 }
 
@@ -148,6 +172,7 @@ model Role {
 model UserStory {
   id                 String      @id @default(uuid()) @db.Uuid
   projectId          String      @db.Uuid
+  sprintId           String?     @db.Uuid
   code               String
   title              String
   asA                String
@@ -165,13 +190,19 @@ model UserStory {
   updatedAt          DateTime    @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  sprint  Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   // Back relation to sessions
   estimationSessions EstimationSession[] @relation("StorySessions")
   tags               UserStoryTag[]
 
+  // New relations
+  tasks           Task[]
+  dailyScrumLinks DailyScrumStory[]
+
   @@unique([projectId, code])
   @@index([projectId, status, orderRank])
+  @@index([sprintId])
 }
 
 model UserStoryTag {
@@ -194,7 +225,6 @@ model EstimationSession {
   finalEstimation String?
   method          EstimationMethod
   sequence        Json
-  currentRound    Int              @default(1)
   startedAt       DateTime?
   completedAt     DateTime?
   createdAt       DateTime         @default(now())
@@ -252,17 +282,17 @@ model ProjectConfig {
 }
 
 model PasswordResetToken {
-  id         String   @id @default(uuid()) @db.Uuid
-  userId     String   @db.Uuid
-  tokenHash  String   @unique
-  expiresAt  DateTime
-  usedAt     DateTime?
-  requestedById String?  @db.Uuid
-  requestedIp   String?
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @db.Uuid
+  tokenHash          String    @unique
+  expiresAt          DateTime
+  usedAt             DateTime?
+  requestedById      String?   @db.Uuid
+  requestedIp        String?
   requestedUserAgent String?
-  createdAt  DateTime @default(now())
+  createdAt          DateTime  @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user        User  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   requestedBy User? @relation("PasswordResetAdmin", fields: [requestedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([userId])
@@ -271,16 +301,147 @@ model PasswordResetToken {
 }
 
 model PasswordResetRequest {
-  id                String   @id @default(uuid()) @db.Uuid
-  userId            String?  @db.Uuid
-  emailHash         String
-  requestedIp       String?
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String?  @db.Uuid
+  emailHash          String
+  requestedIp        String?
   requestedUserAgent String?
-  createdAt         DateTime @default(now())
+  createdAt          DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([emailHash, createdAt])
   @@index([requestedIp, createdAt])
   @@index([userId, createdAt])
+}
+
+// -------------------- New Models (Sprints, Tasks, etc.) --------------------
+
+model Sprint {
+  id        String       @id @default(uuid()) @db.Uuid
+  projectId String       @db.Uuid
+  number    Int
+  name      String
+  goal      String
+  startDate DateTime
+  endDate   DateTime
+  duration  Int // duración en semanas (1-4)
+  status    SprintStatus @default(PLANNED)
+  capacity  Int?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  stories           UserStory[]
+  dailyScrums       DailyScrum[]
+  burndownSnapshots BurndownSnapshot[]
+
+  @@unique([projectId, number])
+  @@index([projectId, status])
+}
+
+model Task {
+  id           String     @id @default(uuid()) @db.Uuid
+  storyId      String     @db.Uuid
+  code         String
+  title        String
+  description  String?
+  effort       Int
+  status       TaskStatus @default(TODO)
+  assignedToId String?    @db.Uuid
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  completedAt  DateTime?
+
+  story        UserStory         @relation(fields: [storyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  assignedTo   User?             @relation(fields: [assignedToId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  activityLogs TaskActivityLog[]
+
+  @@unique([storyId, code])
+  @@index([storyId, status])
+  @@index([assignedToId])
+}
+
+model TaskActivityLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  taskId      String   @db.Uuid
+  userId      String   @db.Uuid
+  action      String // "moved", "assigned", "updated", etc.
+  fromStatus  String?
+  toStatus    String?
+  description String
+  createdAt   DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([taskId, createdAt])
+  @@index([userId])
+}
+
+model DailyScrum {
+  id               String   @id @default(uuid()) @db.Uuid
+  sprintId         String   @db.Uuid
+  userId           String   @db.Uuid
+  date             DateTime @db.Date
+  whatDidYesterday String
+  whatWillDoToday  String
+  impediments      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  sprint        Sprint            @relation(fields: [sprintId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  linkedStories DailyScrumStory[]
+
+  @@unique([sprintId, userId, date])
+  @@index([sprintId, date])
+  @@index([userId])
+}
+
+model DailyScrumStory {
+  id           String @id @default(uuid()) @db.Uuid
+  dailyScrumId String @db.Uuid
+  storyId      String @db.Uuid
+
+  dailyScrum DailyScrum @relation(fields: [dailyScrumId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  story      UserStory  @relation(fields: [storyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([dailyScrumId, storyId])
+  @@index([storyId])
+}
+
+model BurndownSnapshot {
+  id               String   @id @default(uuid()) @db.Uuid
+  sprintId         String   @db.Uuid
+  date             DateTime @db.Date
+  effortRemaining  Int
+  effortCompleted  Int
+  effortCommitted  Int
+  storiesCompleted Int
+  storiesTotal     Int
+  tasksCompleted   Int
+  tasksTotal       Int
+  createdAt        DateTime @default(now())
+
+  sprint Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([sprintId, date])
+  @@index([sprintId, date])
+}
+
+model Repository {
+  id         String   @id @default(uuid()) @db.Uuid
+  projectId  String   @db.Uuid
+  name       String
+  url        String
+  mainBranch String   @default("main")
+  isPrimary  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([projectId, url])
+  @@index([projectId])
 }
