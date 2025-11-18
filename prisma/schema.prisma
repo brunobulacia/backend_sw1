@@ -225,6 +225,7 @@ model EstimationSession {
   finalEstimation String?
   method          EstimationMethod
   sequence        Json
+  currentRound    Int              @default(1)
   startedAt       DateTime?
   completedAt     DateTime?
   createdAt       DateTime         @default(now())
@@ -445,3 +446,4 @@ model Repository {
   @@unique([projectId, url])
   @@index([projectId])
 }
+
