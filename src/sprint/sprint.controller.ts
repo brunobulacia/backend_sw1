@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Param,
@@ -26,6 +27,8 @@ import { AddStoriesToSprintDto } from './dto/add-stories-to-sprint.dto';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
 import { ExportBurndownDto, ExportFormat } from './dto/export-burndown.dto';
 import { ChangeSprintStatusDto } from './dto/change-sprint-status.dto';
+import { CreateSprintReviewDto } from './dto/create-sprint-review.dto';
+import { CreateSprintRetrospectiveDto } from './dto/create-sprint-retrospective.dto';
 
 @Controller('projects/:projectId/sprints')
 @UseGuards(JwtAuthGuard)
@@ -286,5 +289,85 @@ export class SprintController {
     }
 
     return new StreamableFile(buffer);
+  }
+
+  // ========== SPRINT REVIEW ENDPOINTS ==========
+
+  @Get(':sprintId/review')
+  async getSprintReview(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Request() req: any,
+  ) {
+    return this.sprintService.getSprintReview(projectId, sprintId, req.user.id);
+  }
+
+  @Post(':sprintId/review')
+  async createSprintReview(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Body() dto: CreateSprintReviewDto,
+    @Request() req: any,
+  ) {
+    return this.sprintService.createSprintReview(projectId, sprintId, dto, req.user.id);
+  }
+
+  @Put(':sprintId/review')
+  async updateSprintReview(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Body() dto: CreateSprintReviewDto,
+    @Request() req: any,
+  ) {
+    return this.sprintService.updateSprintReview(projectId, sprintId, dto, req.user.id);
+  }
+
+  @Delete(':sprintId/review')
+  async deleteSprintReview(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Request() req: any,
+  ) {
+    return this.sprintService.deleteSprintReview(projectId, sprintId, req.user.id);
+  }
+
+  // ========== SPRINT RETROSPECTIVE ENDPOINTS ==========
+
+  @Get(':sprintId/retrospective')
+  async getSprintRetrospective(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Request() req: any,
+  ) {
+    return this.sprintService.getSprintRetrospective(projectId, sprintId, req.user.id);
+  }
+
+  @Post(':sprintId/retrospective')
+  async createSprintRetrospective(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Body() dto: CreateSprintRetrospectiveDto,
+    @Request() req: any,
+  ) {
+    return this.sprintService.createSprintRetrospective(projectId, sprintId, dto, req.user.id);
+  }
+
+  @Put(':sprintId/retrospective')
+  async updateSprintRetrospective(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Body() dto: CreateSprintRetrospectiveDto,
+    @Request() req: any,
+  ) {
+    return this.sprintService.updateSprintRetrospective(projectId, sprintId, dto, req.user.id);
+  }
+
+  @Delete(':sprintId/retrospective')
+  async deleteSprintRetrospective(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Request() req: any,
+  ) {
+    return this.sprintService.deleteSprintRetrospective(projectId, sprintId, req.user.id);
   }
 }

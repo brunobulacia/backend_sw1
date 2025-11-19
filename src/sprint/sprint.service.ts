@@ -876,4 +876,373 @@ export class SprintService {
 
     throw new BadRequestException('Estado de sprint no válido');
   }
+
+  // ========== SPRINT REVIEW METHODS ==========
+
+  /**
+   * Get Sprint Review for a sprint
+   */
+  async getSprintReview(projectId: string, sprintId: string, userId: string) {
+    await this.verifyProjectAccess(projectId, userId);
+
+    const review = await this.prisma.sprintReview.findUnique({
+      where: { sprintId },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!review) {
+      throw new NotFoundException('Sprint Review no encontrada');
+    }
+
+    return review;
+  }
+
+  /**
+   * Create Sprint Review
+   */
+  async createSprintReview(
+    projectId: string,
+    sprintId: string,
+    data: { date: string; participants: string; summary: string; feedbackGeneral?: string },
+    userId: string,
+  ) {
+    const { userRole } = await this.verifyProjectAccess(projectId, userId);
+
+    // Only Scrum Master can create review
+    if (userRole !== 'SCRUM_MASTER') {
+      throw new ForbiddenException('Solo el Scrum Master puede crear la Sprint Review');
+    }
+
+    // Verify sprint exists
+    const sprint = await this.prisma.sprint.findFirst({
+      where: { id: sprintId, projectId },
+    });
+
+    if (!sprint) {
+      throw new NotFoundException('Sprint no encontrado');
+    }
+
+    // Check if review already exists
+    const existingReview = await this.prisma.sprintReview.findUnique({
+      where: { sprintId },
+    });
+
+    if (existingReview) {
+      throw new BadRequestException('Ya existe una Sprint Review para este sprint');
+    }
+
+    const review = await this.prisma.sprintReview.create({
+      data: {
+        sprintId,
+        date: new Date(data.date),
+        participants: data.participants,
+        summary: data.summary,
+        feedbackGeneral: data.feedbackGeneral || null,
+        createdById: userId,
+      },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return review;
+  }
+
+  /**
+   * Update Sprint Review
+   */
+  async updateSprintReview(
+    projectId: string,
+    sprintId: string,
+    data: { date: string; participants: string; summary: string; feedbackGeneral?: string },
+    userId: string,
+  ) {
+    const { userRole } = await this.verifyProjectAccess(projectId, userId);
+
+    // Only Scrum Master can update review
+    if (userRole !== 'SCRUM_MASTER') {
+      throw new ForbiddenException('Solo el Scrum Master puede actualizar la Sprint Review');
+    }
+
+    const review = await this.prisma.sprintReview.findUnique({
+      where: { sprintId },
+    });
+
+    if (!review) {
+      throw new NotFoundException('Sprint Review no encontrada');
+    }
+
+    const updatedReview = await this.prisma.sprintReview.update({
+      where: { sprintId },
+      data: {
+        date: new Date(data.date),
+        participants: data.participants,
+        summary: data.summary,
+        feedbackGeneral: data.feedbackGeneral || null,
+      },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return updatedReview;
+  }
+
+  /**
+   * Delete Sprint Review
+   */
+  async deleteSprintReview(projectId: string, sprintId: string, userId: string) {
+    const { userRole } = await this.verifyProjectAccess(projectId, userId);
+
+    // Only Scrum Master can delete review
+    if (userRole !== 'SCRUM_MASTER') {
+      throw new ForbiddenException('Solo el Scrum Master puede eliminar la Sprint Review');
+    }
+
+    const review = await this.prisma.sprintReview.findUnique({
+      where: { sprintId },
+    });
+
+    if (!review) {
+      throw new NotFoundException('Sprint Review no encontrada');
+    }
+
+    await this.prisma.sprintReview.delete({
+      where: { sprintId },
+    });
+
+    return { message: 'Sprint Review eliminada exitosamente' };
+  }
+
+  // ========== SPRINT RETROSPECTIVE METHODS ==========
+
+  /**
+   * Get Sprint Retrospective for a sprint
+   */
+  async getSprintRetrospective(projectId: string, sprintId: string, userId: string) {
+    await this.verifyProjectAccess(projectId, userId);
+
+    const retro = await this.prisma.sprintRetrospective.findUnique({
+      where: { sprintId },
+      include: {
+        improvementActions: true,
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!retro) {
+      throw new NotFoundException('Sprint Retrospective no encontrada');
+    }
+
+    return retro;
+  }
+
+  /**
+   * Create Sprint Retrospective
+   */
+  async createSprintRetrospective(
+    projectId: string,
+    sprintId: string,
+    data: {
+      whatWentWell: string;
+      whatToImprove: string;
+      whatToStopDoing: string;
+      improvementActions: { description: string; responsible?: string; dueDate?: string }[];
+    },
+    userId: string,
+  ) {
+    const { userRole } = await this.verifyProjectAccess(projectId, userId);
+
+    // Only Scrum Master can create retrospective
+    if (userRole !== 'SCRUM_MASTER') {
+      throw new ForbiddenException('Solo el Scrum Master puede crear la Sprint Retrospective');
+    }
+
+    // Verify sprint exists
+    const sprint = await this.prisma.sprint.findFirst({
+      where: { id: sprintId, projectId },
+    });
+
+    if (!sprint) {
+      throw new NotFoundException('Sprint no encontrado');
+    }
+
+    // Check if retrospective already exists
+    const existingRetro = await this.prisma.sprintRetrospective.findUnique({
+      where: { sprintId },
+    });
+
+    if (existingRetro) {
+      throw new BadRequestException('Ya existe una Sprint Retrospective para este sprint');
+    }
+
+    // Validate at least one improvement action
+    const validActions = data.improvementActions.filter(a => a.description.trim());
+    if (validActions.length === 0) {
+      throw new BadRequestException('Debe incluir al menos una acción de mejora');
+    }
+
+    const retro = await this.prisma.sprintRetrospective.create({
+      data: {
+        sprintId,
+        whatWentWell: data.whatWentWell,
+        whatToImprove: data.whatToImprove,
+        whatToStopDoing: data.whatToStopDoing,
+        createdById: userId,
+        improvementActions: {
+          create: validActions.map(action => ({
+            description: action.description,
+            responsible: action.responsible || null,
+            dueDate: action.dueDate ? new Date(action.dueDate) : null,
+            status: 'PENDING',
+          })),
+        },
+      },
+      include: {
+        improvementActions: true,
+        createdBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return retro;
+  }
+
+  /**
+   * Update Sprint Retrospective
+   */
+  async updateSprintRetrospective(
+    projectId: string,
+    sprintId: string,
+    data: {
+      whatWentWell: string;
+      whatToImprove: string;
+      whatToStopDoing: string;
+      improvementActions: { description: string; responsible?: string; dueDate?: string }[];
+    },
+    userId: string,
+  ) {
+    const { userRole } = await this.verifyProjectAccess(projectId, userId);
+
+    // Only Scrum Master can update retrospective
+    if (userRole !== 'SCRUM_MASTER') {
+      throw new ForbiddenException('Solo el Scrum Master puede actualizar la Sprint Retrospective');
+    }
+
+    const retro = await this.prisma.sprintRetrospective.findUnique({
+      where: { sprintId },
+    });
+
+    if (!retro) {
+      throw new NotFoundException('Sprint Retrospective no encontrada');
+    }
+
+    // Validate at least one improvement action
+    const validActions = data.improvementActions.filter(a => a.description.trim());
+    if (validActions.length === 0) {
+      throw new BadRequestException('Debe incluir al menos una acción de mejora');
+    }
+
+    // Update in transaction: delete old actions, create new ones
+    const updatedRetro = await this.prisma.$transaction(async (tx) => {
+      // Delete existing improvement actions
+      await tx.improvementAction.deleteMany({
+        where: { retrospectiveId: retro.id },
+      });
+
+      // Update retrospective with new actions
+      return tx.sprintRetrospective.update({
+        where: { sprintId },
+        data: {
+          whatWentWell: data.whatWentWell,
+          whatToImprove: data.whatToImprove,
+          whatToStopDoing: data.whatToStopDoing,
+          improvementActions: {
+            create: validActions.map(action => ({
+              description: action.description,
+              responsible: action.responsible || null,
+              dueDate: action.dueDate ? new Date(action.dueDate) : null,
+              status: 'PENDING',
+            })),
+          },
+        },
+        include: {
+          improvementActions: true,
+          createdBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      });
+    });
+
+    return updatedRetro;
+  }
+
+  /**
+   * Delete Sprint Retrospective
+   */
+  async deleteSprintRetrospective(projectId: string, sprintId: string, userId: string) {
+    const { userRole } = await this.verifyProjectAccess(projectId, userId);
+
+    // Only Scrum Master can delete retrospective
+    if (userRole !== 'SCRUM_MASTER') {
+      throw new ForbiddenException('Solo el Scrum Master puede eliminar la Sprint Retrospective');
+    }
+
+    const retro = await this.prisma.sprintRetrospective.findUnique({
+      where: { sprintId },
+    });
+
+    if (!retro) {
+      throw new NotFoundException('Sprint Retrospective no encontrada');
+    }
+
+    // Delete will cascade to improvement actions
+    await this.prisma.sprintRetrospective.delete({
+      where: { sprintId },
+    });
+
+    return { message: 'Sprint Retrospective eliminada exitosamente' };
+  }
 }
