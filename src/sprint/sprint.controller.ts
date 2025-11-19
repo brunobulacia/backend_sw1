@@ -25,6 +25,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { AddStoriesToSprintDto } from './dto/add-stories-to-sprint.dto';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
 import { ExportBurndownDto, ExportFormat } from './dto/export-burndown.dto';
+import { ChangeSprintStatusDto } from './dto/change-sprint-status.dto';
 
 @Controller('projects/:projectId/sprints')
 @UseGuards(JwtAuthGuard)
@@ -149,6 +150,21 @@ export class SprintController {
     @Request() req: any,
   ) {
     return this.sprintService.startSprint(projectId, sprintId, req.user.id);
+  }
+
+  @Patch(':sprintId/status')
+  async changeSprintStatus(
+    @Param('projectId') projectId: string,
+    @Param('sprintId') sprintId: string,
+    @Body() dto: ChangeSprintStatusDto,
+    @Request() req: any,
+  ) {
+    return this.sprintService.changeSprintStatus(
+      projectId,
+      sprintId,
+      dto.status,
+      req.user.id,
+    );
   }
 
   // ========== ENDPOINTS DE BURNDOWN Y MÉTRICAS ==========

@@ -743,4 +743,137 @@ export class SprintService {
 
     return stories;
   }
+
+  /**
+   * Cambiar el estado de un sprint
+   */
+  async changeSprintStatus(
+    projectId: string,
+    sprintId: string,
+    newStatus: 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED',
+    userId: string,
+  ) {
+    const { userRole, project } = await this.verifyProjectAccess(projectId, userId);
+
+    // Solo Scrum Master y Product Owner pueden cambiar estados
+    if (userRole !== 'SCRUM_MASTER' && userRole !== 'PRODUCT_OWNER' && project.ownerId !== userId) {
+      throw new ForbiddenException('Solo el Scrum Master o Product Owner pueden cambiar el estado del sprint');
+    }
+
+    const sprint = await this.prisma.sprint.findFirst({
+      where: { id: sprintId, projectId },
+      include: {
+        stories: {
+          include: {
+            tasks: true,
+          },
+        },
+      },
+    });
+
+    if (!sprint) {
+      throw new NotFoundException('Sprint no encontrado');
+    }
+
+    // Validaciones según el nuevo estado
+    if (newStatus === 'IN_PROGRESS') {
+      // Usar el método existente startSprint
+      return this.startSprint(projectId, sprintId, userId);
+    }
+
+    if (newStatus === 'COMPLETED') {
+      // Validar que todas las tareas estén DONE
+      const allTasks = sprint.stories.flatMap((story) => story.tasks);
+      const incompleteTasks = allTasks.filter((task) => task.status !== 'DONE');
+
+      if (incompleteTasks.length > 0) {
+        throw new BadRequestException(
+          `No se puede completar el sprint. Hay ${incompleteTasks.length} tarea(s) sin completar. Todas las tareas deben estar en estado DONE.`,
+        );
+      }
+
+      // Validar que el sprint esté actualmente en IN_PROGRESS
+      if (sprint.status !== 'IN_PROGRESS') {
+        throw new BadRequestException(
+          'Solo se puede completar un sprint que esté en estado IN_PROGRESS',
+        );
+      }
+
+      // Calcular la velocidad real (story points completados)
+      const completedStoryPoints = sprint.stories.reduce(
+        (sum, story) => sum + (story.estimateHours || 0),
+        0,
+      );
+
+      // Marcar sprint como completado y actualizar historias
+      const updatedSprint = await this.prisma.$transaction(async (tx) => {
+        // Actualizar estado del sprint
+        const updated = await tx.sprint.update({
+          where: { id: sprintId },
+          data: {
+            status: 'COMPLETED',
+            actualVelocity: completedStoryPoints,
+          },
+        });
+
+        // Marcar todas las historias como DONE
+        const storyIds = sprint.stories.map((s) => s.id);
+        if (storyIds.length > 0) {
+          await tx.userStory.updateMany({
+            where: { id: { in: storyIds } },
+            data: { status: 'DONE' },
+          });
+        }
+
+        return updated;
+      });
+
+      return updatedSprint;
+    }
+
+    if (newStatus === 'CANCELLED') {
+      // Permitir cancelación desde cualquier estado
+      const updatedSprint = await this.prisma.$transaction(async (tx) => {
+        // Actualizar estado del sprint
+        const updated = await tx.sprint.update({
+          where: { id: sprintId },
+          data: { status: 'CANCELLED' },
+        });
+
+        // Devolver las historias al backlog (quitar sprintId)
+        const storyIds = sprint.stories.map((s) => s.id);
+        if (storyIds.length > 0) {
+          await tx.userStory.updateMany({
+            where: { id: { in: storyIds } },
+            data: {
+              sprintId: null,
+              status: 'BACKLOG',
+            },
+          });
+        }
+
+        return updated;
+      });
+
+      return updatedSprint;
+    }
+
+    if (newStatus === 'PLANNED') {
+      // Permitir volver a PLANNED solo si está en PLANNED o IN_PROGRESS sin trabajo hecho
+      if (sprint.status === 'COMPLETED' || sprint.status === 'CANCELLED') {
+        throw new BadRequestException(
+          'No se puede volver a PLANNED un sprint que ya está COMPLETED o CANCELLED',
+        );
+      }
+
+      const updatedSprint = await this.prisma.sprint.update({
+        where: { id: sprintId },
+        data: { status: 'PLANNED' },
+      });
+
+      return updatedSprint;
+    }
+
+    throw new BadRequestException('Estado de sprint no válido');
+  }
 }

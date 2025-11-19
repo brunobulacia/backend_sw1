@@ -106,6 +106,26 @@ async function main() {
   });
   console.log('  ✅ Developer 2 creado:', developer2.email);
 
+  // Desarrollador 3
+  const dev3Password = await bcrypt.hash('Developer123', 10);
+  const developer3 = await prisma.user.upsert({
+    where: { email: 'dev3@proyecto.com' },
+    update: {},
+    create: {
+      email: 'dev3@proyecto.com',
+      username: 'developer3',
+      password: dev3Password,
+      firstName: 'Luis',
+      lastName: 'Martinez',
+      timezone: 'America/La_Paz',
+      githubUsername: 'luismartinez',
+      isAdmin: false,
+      isActive: true,
+      passwordChangedAt: new Date(),
+    },
+  });
+  console.log('  ✅ Developer 3 creado:', developer3.email);
+
   // Usuario Regular (sin proyecto asignado)
   const userPassword = await bcrypt.hash('User123456', 10);
   const regularUser = await prisma.user.upsert({
@@ -220,7 +240,23 @@ async function main() {
     },
   });
 
-  console.log('    ✅ Equipo asignado (4 miembros)');
+  await prisma.projectMember.upsert({
+    where: {
+      projectId_userId: {
+        projectId: project1.id,
+        userId: developer3.id,
+      },
+    },
+    update: {},
+    create: {
+      projectId: project1.id,
+      userId: developer3.id,
+      role: ProjectMemberRole.DEVELOPER,
+      isActive: true,
+    },
+  });
+
+  console.log('    ✅ Equipo asignado (5 miembros)');
 
   // Proyecto 2: E-Commerce Platform
   const project2 = await prisma.project.upsert({
@@ -524,6 +560,395 @@ async function main() {
   console.log('  ✅ 2 historias creadas para', project2.name);
 
   // ============================================================
+  // 4. CREAR TAREAS PARA LAS HISTORIAS
+  // ============================================================
+  console.log('\n📋 Creando tareas para las historias de usuario...');
+
+  // Tareas para Story 1 (Login) - COMPLETADAS
+  await prisma.task.createMany({
+    data: [
+      {
+        storyId: story1.id,
+        code: 'T-US-001-1',
+        title: 'Implementar endpoint de login',
+        description: 'Crear endpoint POST /auth/login que reciba email y password',
+        effort: 3,
+        status: 'DONE',
+        assignedToId: developer1.id,
+        completedAt: new Date('2025-01-20T10:00:00'),
+        startedAt: new Date('2025-01-18T09:00:00'),
+      },
+      {
+        storyId: story1.id,
+        code: 'T-US-001-2',
+        title: 'Validación de credenciales',
+        description: 'Implementar lógica de validación con bcrypt',
+        effort: 2,
+        status: 'DONE',
+        assignedToId: developer1.id,
+        completedAt: new Date('2025-01-20T15:00:00'),
+        startedAt: new Date('2025-01-20T11:00:00'),
+      },
+      {
+        storyId: story1.id,
+        code: 'T-US-001-3',
+        title: 'Generación de token JWT',
+        description: 'Configurar passport-jwt y generar tokens con expiración',
+        effort: 2,
+        status: 'DONE',
+        assignedToId: developer2.id,
+        completedAt: new Date('2025-01-21T12:00:00'),
+        startedAt: new Date('2025-01-21T09:00:00'),
+      },
+      {
+        storyId: story1.id,
+        code: 'T-US-001-4',
+        title: 'Tests unitarios de autenticación',
+        description: 'Escribir tests para validación y generación de tokens',
+        effort: 1,
+        status: 'DONE',
+        assignedToId: developer2.id,
+        completedAt: new Date('2025-01-21T16:00:00'),
+        startedAt: new Date('2025-01-21T14:00:00'),
+      },
+    ],
+  });
+
+  // Tareas para Story 2 (Crear proyecto) - COMPLETADAS
+  await prisma.task.createMany({
+    data: [
+      {
+        storyId: story2.id,
+        code: 'T-US-002-1',
+        title: 'Diseñar schema de proyectos',
+        description: 'Crear modelos Project, ProjectMember en Prisma',
+        effort: 2,
+        status: 'DONE',
+        assignedToId: developer1.id,
+        completedAt: new Date('2025-01-22T11:00:00'),
+        startedAt: new Date('2025-01-22T09:00:00'),
+      },
+      {
+        storyId: story2.id,
+        code: 'T-US-002-2',
+        title: 'Endpoint de creación de proyecto',
+        description: 'POST /projects con validación de datos',
+        effort: 4,
+        status: 'DONE',
+        assignedToId: developer1.id,
+        completedAt: new Date('2025-01-23T16:00:00'),
+        startedAt: new Date('2025-01-23T09:00:00'),
+      },
+      {
+        storyId: story2.id,
+        code: 'T-US-002-3',
+        title: 'Asignación de miembros al equipo',
+        description: 'Lógica para agregar miembros con roles y validaciones',
+        effort: 5,
+        status: 'DONE',
+        assignedToId: developer3.id,
+        completedAt: new Date('2025-01-24T17:00:00'),
+        startedAt: new Date('2025-01-24T09:00:00'),
+      },
+      {
+        storyId: story2.id,
+        code: 'T-US-002-4',
+        title: 'Generación automática de código de proyecto',
+        description: 'Algoritmo para generar códigos únicos tipo SGA-2025',
+        effort: 3,
+        status: 'DONE',
+        assignedToId: developer2.id,
+        completedAt: new Date('2025-01-25T14:00:00'),
+        startedAt: new Date('2025-01-25T10:00:00'),
+      },
+      {
+        storyId: story2.id,
+        code: 'T-US-002-5',
+        title: 'Validaciones de roles',
+        description: 'Validar que solo haya 1 PO y máximo 1 SM',
+        effort: 2,
+        status: 'DONE',
+        assignedToId: developer2.id,
+        completedAt: new Date('2025-01-25T17:00:00'),
+        startedAt: new Date('2025-01-25T15:00:00'),
+      },
+    ],
+  });
+
+  // Tareas para Story 3 (Gestión de historias) - EN PROGRESO
+  await prisma.task.createMany({
+    data: [
+      {
+        storyId: story3.id,
+        code: 'T-US-003-1',
+        title: 'Modelo de datos para historias',
+        description: 'Crear schema UserStory con todos los campos requeridos',
+        effort: 2,
+        status: 'DONE',
+        assignedToId: developer1.id,
+        completedAt: new Date('2025-01-26T12:00:00'),
+        startedAt: new Date('2025-01-26T09:00:00'),
+      },
+      {
+        storyId: story3.id,
+        code: 'T-US-003-2',
+        title: 'CRUD de historias de usuario',
+        description: 'Endpoints para crear, listar, actualizar y eliminar historias',
+        effort: 6,
+        status: 'DONE',
+        assignedToId: developer3.id,
+        completedAt: new Date('2025-01-27T18:00:00'),
+        startedAt: new Date('2025-01-27T09:00:00'),
+      },
+      {
+        storyId: story3.id,
+        code: 'T-US-003-3',
+        title: 'Sistema de tags para categorización',
+        description: 'Modelo UserStoryTag y endpoints para gestionar tags',
+        effort: 3,
+        status: 'IN_PROGRESS',
+        assignedToId: developer2.id,
+        startedAt: new Date('2025-01-28T09:00:00'),
+      },
+      {
+        storyId: story3.id,
+        code: 'T-US-003-4',
+        title: 'Reordenamiento de historias',
+        description: 'Endpoint para actualizar orderRank con drag & drop',
+        effort: 4,
+        status: 'TODO',
+        assignedToId: developer2.id,
+      },
+      {
+        storyId: story3.id,
+        code: 'T-US-003-5',
+        title: 'Validaciones de prioridad y negocio',
+        description: 'DTOs con class-validator para campos numéricos',
+        effort: 2,
+        status: 'TODO',
+      },
+      {
+        storyId: story3.id,
+        code: 'T-US-003-6',
+        title: 'Tests E2E del CRUD',
+        description: 'Suite completa de tests para todas las operaciones',
+        effort: 3,
+        status: 'TODO',
+      },
+    ],
+  });
+
+  // Tareas para Story 4 (Planning Poker) - PENDIENTES
+  await prisma.task.createMany({
+    data: [
+      {
+        storyId: story4.id,
+        code: 'T-US-004-1',
+        title: 'Modelo de sesiones de estimación',
+        description: 'Schema para EstimationSession y EstimationVote',
+        effort: 3,
+        status: 'TODO',
+      },
+      {
+        storyId: story4.id,
+        code: 'T-US-004-2',
+        title: 'Crear y configurar sesión',
+        description: 'Endpoint para crear sesión con método de estimación',
+        effort: 4,
+        status: 'TODO',
+      },
+      {
+        storyId: story4.id,
+        code: 'T-US-004-3',
+        title: 'Sistema de votación anónima',
+        description: 'Endpoint para votar y almacenar votos ocultos',
+        effort: 5,
+        status: 'TODO',
+      },
+      {
+        storyId: story4.id,
+        code: 'T-US-004-4',
+        title: 'Revelación de votos',
+        description: 'Lógica para revelar todos los votos simultáneamente',
+        effort: 3,
+        status: 'TODO',
+      },
+      {
+        storyId: story4.id,
+        code: 'T-US-004-5',
+        title: 'Múltiples rondas de votación',
+        description: 'Permitir reiniciar votación si no hay consenso',
+        effort: 4,
+        status: 'TODO',
+      },
+      {
+        storyId: story4.id,
+        code: 'T-US-004-6',
+        title: 'Finalizar sesión y guardar estimación',
+        description: 'Guardar estimación final en la historia',
+        effort: 2,
+        status: 'TODO',
+      },
+      {
+        storyId: story4.id,
+        code: 'T-US-004-7',
+        title: 'Historial de sesiones',
+        description: 'Endpoint para ver sesiones pasadas con votos',
+        effort: 3,
+        status: 'TODO',
+      },
+    ],
+  });
+
+  // Tareas para Story 5 (Dashboard) - PENDIENTES
+  await prisma.task.createMany({
+    data: [
+      {
+        storyId: story5.id,
+        code: 'T-US-005-1',
+        title: 'Endpoint de métricas del proyecto',
+        description: 'API que devuelva métricas agregadas del proyecto',
+        effort: 5,
+        status: 'TODO',
+      },
+      {
+        storyId: story5.id,
+        code: 'T-US-005-2',
+        title: 'Cálculo de velocidad del equipo',
+        description: 'Obtener velocidad promedio de últimos 3 sprints',
+        effort: 4,
+        status: 'TODO',
+      },
+      {
+        storyId: story5.id,
+        code: 'T-US-005-3',
+        title: 'Componente de Burndown Chart',
+        description: 'Gráfico interactivo con Recharts',
+        effort: 6,
+        status: 'TODO',
+      },
+      {
+        storyId: story5.id,
+        code: 'T-US-005-4',
+        title: 'Tarjetas de indicadores',
+        description: 'Cards con métricas clave (historias, velocidad, etc)',
+        effort: 4,
+        status: 'TODO',
+      },
+      {
+        storyId: story5.id,
+        code: 'T-US-005-5',
+        title: 'Gráfico de distribución de trabajo',
+        description: 'Chart mostrando asignación por desarrollador',
+        effort: 5,
+        status: 'TODO',
+      },
+      {
+        storyId: story5.id,
+        code: 'T-US-005-6',
+        title: 'Actualización en tiempo real',
+        description: 'Polling o WebSockets para actualizar métricas',
+        effort: 6,
+        status: 'TODO',
+      },
+    ],
+  });
+
+  // Tareas para Story 6 (Catálogo de productos) - E-Commerce
+  await prisma.task.createMany({
+    data: [
+      {
+        storyId: story6.id,
+        code: 'T-US-001-1',
+        title: 'Modelo de productos',
+        description: 'Schema de Product con categorías',
+        effort: 2,
+        status: 'TODO',
+      },
+      {
+        storyId: story6.id,
+        code: 'T-US-001-2',
+        title: 'Listado de productos con paginación',
+        description: 'Endpoint GET /products con filtros y paginación',
+        effort: 4,
+        status: 'TODO',
+      },
+      {
+        storyId: story6.id,
+        code: 'T-US-001-3',
+        title: 'Filtros por categoría',
+        description: 'Implementar filtrado por categorías múltiples',
+        effort: 3,
+        status: 'TODO',
+      },
+      {
+        storyId: story6.id,
+        code: 'T-US-001-4',
+        title: 'Búsqueda full-text',
+        description: 'Búsqueda por nombre y descripción de productos',
+        effort: 3,
+        status: 'TODO',
+      },
+    ],
+  });
+
+  // Tareas para Story 7 (Carrito de compras)
+  await prisma.task.createMany({
+    data: [
+      {
+        storyId: story7.id,
+        code: 'T-US-002-1',
+        title: 'Modelo de carrito',
+        description: 'Schema Cart y CartItem',
+        effort: 2,
+        status: 'TODO',
+      },
+      {
+        storyId: story7.id,
+        code: 'T-US-002-2',
+        title: 'Agregar/quitar productos del carrito',
+        description: 'Endpoints para gestionar items del carrito',
+        effort: 4,
+        status: 'TODO',
+      },
+      {
+        storyId: story7.id,
+        code: 'T-US-002-3',
+        title: 'Cálculo de totales',
+        description: 'Lógica para calcular subtotales, impuestos y total',
+        effort: 3,
+        status: 'TODO',
+      },
+      {
+        storyId: story7.id,
+        code: 'T-US-002-4',
+        title: 'Sistema de descuentos',
+        description: 'Validación y aplicación de códigos promocionales',
+        effort: 5,
+        status: 'TODO',
+      },
+      {
+        storyId: story7.id,
+        code: 'T-US-002-5',
+        title: 'Persistencia del carrito',
+        description: 'Guardar carrito en sesión/base de datos',
+        effort: 2,
+        status: 'TODO',
+      },
+    ],
+  });
+
+  console.log('  ✅ Tareas creadas:');
+  console.log('     - Story 1: 4 tareas (TODAS COMPLETADAS)');
+  console.log('     - Story 2: 5 tareas (TODAS COMPLETADAS)');
+  console.log('     - Story 3: 6 tareas (2 completadas, 1 en progreso, 3 pendientes)');
+  console.log('     - Story 4: 7 tareas (TODAS PENDIENTES)');
+  console.log('     - Story 5: 6 tareas (TODAS PENDIENTES)');
+  console.log('     - Story 6: 4 tareas (TODAS PENDIENTES)');
+  console.log('     - Story 7: 5 tareas (TODAS PENDIENTES)');
+  console.log('     TOTAL: 37 tareas');
+
+  // ============================================================
   // RESUMEN FINAL
   // ============================================================
   console.log('\n✨ ¡Seed completado exitosamente!\n');
@@ -555,6 +980,10 @@ async function main() {
   console.log('   Password: Developer123');
   console.log('   Rol:      Developer en Proyecto 1\n');
 
+  console.log('   Email:    dev3@proyecto.com');
+  console.log('   Password: Developer123');
+  console.log('   Rol:      Developer en Proyecto 1\n');
+
   console.log('👤 USUARIO REGULAR:');
   console.log('   Email:    user@proyecto.com');
   console.log('   Password: User123456');
@@ -564,11 +993,12 @@ async function main() {
   console.log('📊 DATOS CREADOS');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  console.log('✅ 6 Usuarios (1 admin + 5 regulares)');
+  console.log('✅ 7 Usuarios (1 admin + 6 regulares)');
   console.log('✅ 2 Proyectos');
-  console.log('✅ 6 Miembros de equipo asignados');
+  console.log('✅ 7 Miembros de equipo asignados');
   console.log('✅ 7 Historias de usuario (5 en Proyecto 1, 2 en Proyecto 2)');
-  console.log('✅ 18 Tags en historias\n');
+  console.log('✅ 18 Tags en historias');
+  console.log('✅ 37 Tareas asignadas a las historias\n');
 
   console.log('═══════════════════════════════════════════════════════════');
   console.log('🚀 PRÓXIMOS PASOS');
