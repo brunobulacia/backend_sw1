@@ -306,11 +306,20 @@ export class KanbanService {
       updateData.completedAt = null;
     }
 
+    // Detectar si se moverá a DONE o se reabrirá (para actualizar PSP)
+    const willComplete = newStatus === 'DONE' && oldStatus !== 'DONE';
+    const willReopen = oldStatus === 'DONE' && newStatus !== 'DONE';
+    const startedNow = newStatus === 'IN_PROGRESS' && oldStatus === 'TODO' && !task.startedAt;
+
     // Update task and create activity log in a transaction
     const [updatedTask] = await this.prisma.$transaction([
       this.prisma.task.update({
         where: { id: taskId },
-        data: updateData,
+        data: {
+          ...updateData,
+          startedAt: startedNow ? new Date() : task.startedAt,
+          reopenCount: willReopen ? task.reopenCount + 1 : task.reopenCount,
+        },
         include: {
           story: {
             select: {
@@ -319,6 +328,7 @@ export class KanbanService {
               title: true,
               priority: true,
               businessValue: true,
+              sprintId: true,
             },
           },
           assignedTo: {
@@ -344,7 +354,79 @@ export class KanbanService {
       }),
     ]);
 
+    // HU13: Actualizar métricas PSP automáticamente si la tarea tiene asignado y está en un sprint
+    if ((willComplete || willReopen) && updatedTask.assignedToId && updatedTask.story.sprintId) {
+      try {
+        await this.recalculatePSPMetrics(
+          updatedTask.story.sprintId,
+          updatedTask.assignedToId,
+        );
+      } catch (error) {
+        console.error('Error actualizando métricas PSP:', error);
+        // No fallar la actualización de tarea por error en métricas
+      }
+    }
+
     return updatedTask;
+  }
+
+  /**
+   * Recalcular métricas PSP de un developer en un sprint
+   * Se llama automáticamente cuando cambia estado de tarea
+   */
+  private async recalculatePSPMetrics(sprintId: string, developerId: string) {
+    const tasks = await this.prisma.task.findMany({
+      where: {
+        assignedToId: developerId,
+        story: {
+          sprintId,
+        },
+      },
+    });
+
+    const tasksCompleted = tasks.filter((t) => t.status === 'DONE').length;
+    const tasksReopened = tasks.reduce((sum, t) => sum + t.reopenCount, 0);
+    const defectsFixed = tasks.filter((t) => t.isBug && t.status === 'DONE').length;
+    const totalEffortHours = tasks
+      .filter((t) => t.status === 'DONE')
+      .reduce((sum, t) => sum + t.effort, 0);
+
+    const completedTasks = tasks.filter((t) => t.completedAt && t.startedAt);
+    const avgTimePerTask =
+      completedTasks.length > 0
+        ? completedTasks.reduce((sum, t) => {
+            const timeInMs =
+              new Date(t.completedAt!).getTime() -
+              new Date(t.startedAt!).getTime();
+            return sum + timeInMs / (1000 * 60 * 60);
+          }, 0) / completedTasks.length
+        : null;
+
+    await this.prisma.developerPSPMetrics.upsert({
+      where: {
+        sprintId_userId: {
+          sprintId,
+          userId: developerId,
+        },
+      },
+      update: {
+        tasksCompleted,
+        tasksReopened,
+        defectsFixed,
+        totalEffortHours,
+        avgTimePerTask,
+        calculatedAt: new Date(),
+      },
+      create: {
+        sprintId,
+        userId: developerId,
+        tasksCompleted,
+        tasksReopened,
+        defectsFixed,
+        totalEffortHours,
+        avgTimePerTask,
+      },
+    });
   }
 
   /**

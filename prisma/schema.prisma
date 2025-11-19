@@ -1,5 +1,6 @@
 // ------------------------------------------------------------
 // Prisma schema - Scrum Planning Poker & Project Management
+// Actualizado con HU11-HU15
 // ------------------------------------------------------------
 generator client {
   provider = "prisma-client-js"
@@ -68,6 +69,42 @@ enum TaskStatus {
   CANCELLED
 }
 
+enum ImprovementActionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum GitHubSyncStatus {
+  SUCCESS
+  ERROR
+  RATE_LIMIT
+}
+
+enum RefactoringSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RefactoringStatus {
+  PENDING
+  RESOLVED
+  IGNORED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum MLDataType {
+  ASSIGNMENT
+  COMPLETION
+  VELOCITY
+}
+
 // ------------------------- Models ---------------------------
 
 model User {
@@ -78,6 +115,7 @@ model User {
   firstName         String
   lastName          String
   timezone          String
+  githubUsername    String?
   isActive          Boolean   @default(true)
   isAdmin           Boolean   @default(false)
   lastLogin         DateTime?
@@ -89,19 +127,25 @@ model User {
   tokenVersion      Int       @default(0)
 
   // Relations
-  ownedProjects           Project[]              @relation("ProjectOwner")
-  memberships             ProjectMember[]
-  createdRoles            Role[]                 @relation("RoleCreator")
-  moderatedSessions       EstimationSession[]    @relation("SessionModerator")
-  estimationVotes         EstimationVote[]
-  passwordResetTokens     PasswordResetToken[]
-  requestedPasswordResets PasswordResetToken[]   @relation("PasswordResetAdmin")
-  passwordResetRequests   PasswordResetRequest[]
-
-  // New relations
-  assignedTasks    Task[]
-  taskActivityLogs TaskActivityLog[]
-  dailyScrums      DailyScrum[]
+  ownedProjects              Project[]                          @relation("ProjectOwner")
+  memberships                ProjectMember[]
+  createdRoles               Role[]                             @relation("RoleCreator")
+  moderatedSessions          EstimationSession[]                @relation("SessionModerator")
+  estimationVotes            EstimationVote[]
+  passwordResetTokens        PasswordResetToken[]
+  requestedPasswordResets    PasswordResetToken[]               @relation("PasswordResetAdmin")
+  passwordResetRequests      PasswordResetRequest[]
+  assignedTasks              Task[]
+  taskActivityLogs           TaskActivityLog[]
+  dailyScrums                DailyScrum[]
+  createdSprintReviews       SprintReview[]
+  createdRetrospectives      SprintRetrospective[]
+  resolvedRefactorings       CodeRefactoringSuggestion[]        @relation("RefactoringResolver")
+  mlSuggestions              MLDeveloperAssignmentSuggestion[]  @relation("MLSuggestedUser")
+  mlAcceptedSuggestions      MLDeveloperAssignmentSuggestion[]  @relation("MLAcceptedBy")
+  githubSyncLogs             GitHubSyncLog[]
+  developerPSPMetrics        DeveloperPSPMetrics[]
+  mlTrainingData             MLTrainingData[]
 }
 
 model Project {
@@ -130,10 +174,9 @@ model Project {
   stories            UserStory[]
   configs            ProjectConfig[]
   estimationSessions EstimationSession[]
-
-  // New relations
-  sprints      Sprint[]
-  repositories Repository[]
+  sprints            Sprint[]
+  repositories       Repository[]
+  mlTrainingData     MLTrainingData[]
 
   @@unique([name])
   @@index([ownerId])
@@ -189,16 +232,16 @@ model UserStory {
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  sprint  Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-
-  // Back relation to sessions
-  estimationSessions EstimationSession[] @relation("StorySessions")
-  tags               UserStoryTag[]
-
-  // New relations
-  tasks           Task[]
-  dailyScrumLinks DailyScrumStory[]
+  project                     Project                           @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  sprint                      Sprint?                           @relation(fields: [sprintId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  estimationSessions          EstimationSession[]               @relation("StorySessions")
+  tags                        UserStoryTag[]
+  tasks                       Task[]
+  dailyScrumLinks             DailyScrumStory[]
+  githubCommits               GitHubCommit[]
+  githubPullRequests          GitHubPullRequest[]
+  mlAssignmentSuggestions     MLDeveloperAssignmentSuggestion[]
+  mlTrainingData              MLTrainingData[]
 
   @@unique([projectId, code])
   @@index([projectId, status, orderRank])
@@ -230,15 +273,11 @@ model EstimationSession {
   completedAt     DateTime?
   createdAt       DateTime         @default(now())
 
-  // Link to story with a named relation
-  storyId String?    @db.Uuid
-  story   UserStory? @relation("StorySessions", fields: [storyId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-
-  // Moderator
-  moderatorId String? @db.Uuid
-  moderator   User?   @relation("SessionModerator", fields: [moderatorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-
-  isRevealed Boolean @default(false)
+  storyId     String?    @db.Uuid
+  story       UserStory? @relation("StorySessions", fields: [storyId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  moderatorId String?    @db.Uuid
+  moderator   User?      @relation("SessionModerator", fields: [moderatorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  isRevealed  Boolean    @default(false)
 
   project Project          @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   votes   EstimationVote[]
@@ -316,26 +355,34 @@ model PasswordResetRequest {
   @@index([userId, createdAt])
 }
 
-// -------------------- New Models (Sprints, Tasks, etc.) --------------------
+// -------------------- Sprint Models --------------------
 
 model Sprint {
-  id        String       @id @default(uuid()) @db.Uuid
-  projectId String       @db.Uuid
-  number    Int
-  name      String
-  goal      String
-  startDate DateTime
-  endDate   DateTime
-  duration  Int // duración en semanas (1-4)
-  status    SprintStatus @default(PLANNED)
-  capacity  Int?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id              String       @id @default(uuid()) @db.Uuid
+  projectId       String       @db.Uuid
+  number          Int
+  name            String
+  goal            String
+  startDate       DateTime
+  endDate         DateTime
+  duration        Int
+  status          SprintStatus @default(PLANNED)
+  capacity        Int?
+  plannedVelocity Int?
+  actualVelocity  Int?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
-  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  stories           UserStory[]
-  dailyScrums       DailyScrum[]
-  burndownSnapshots BurndownSnapshot[]
+  project                Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  stories                UserStory[]
+  dailyScrums            DailyScrum[]
+  burndownSnapshots      BurndownSnapshot[]
+  sprintReview           SprintReview?
+  sprintRetrospective    SprintRetrospective?
+  developerPSPMetrics    DeveloperPSPMetrics[]
+  refactoringSuggestions CodeRefactoringSuggestion[]
+  mlRiskPredictions      MLSprintRiskPrediction[]
+  mlTrainingData         MLTrainingData[]
 
   @@unique([projectId, number])
   @@index([projectId, status])
@@ -350,13 +397,20 @@ model Task {
   effort       Int
   status       TaskStatus @default(TODO)
   assignedToId String?    @db.Uuid
+  isBug        Boolean    @default(false)
+  reopenCount  Int        @default(0)
+  startedAt    DateTime?
+  completedAt  DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
-  completedAt  DateTime?
 
-  story        UserStory         @relation(fields: [storyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  assignedTo   User?             @relation(fields: [assignedToId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  activityLogs TaskActivityLog[]
+  story                   UserStory                         @relation(fields: [storyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  assignedTo              User?                             @relation(fields: [assignedToId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  activityLogs            TaskActivityLog[]
+  githubCommits           GitHubCommit[]
+  githubPullRequests      GitHubPullRequest[]
+  mlAssignmentSuggestions MLDeveloperAssignmentSuggestion[]
+  mlTrainingData          MLTrainingData[]
 
   @@unique([storyId, code])
   @@index([storyId, status])
@@ -367,7 +421,7 @@ model TaskActivityLog {
   id          String   @id @default(uuid()) @db.Uuid
   taskId      String   @db.Uuid
   userId      String   @db.Uuid
-  action      String // "moved", "assigned", "updated", etc.
+  action      String
   fromStatus  String?
   toStatus    String?
   description String
@@ -431,19 +485,276 @@ model BurndownSnapshot {
   @@index([sprintId, date])
 }
 
-model Repository {
-  id         String   @id @default(uuid()) @db.Uuid
-  projectId  String   @db.Uuid
-  name       String
-  url        String
-  mainBranch String   @default("main")
-  isPrimary  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+// -------------------- Repository & GitHub Models --------------------
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+model Repository {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @db.Uuid
+  name        String
+  url         String
+  mainBranch  String    @default("main")
+  isPrimary   Boolean   @default(false)
+  githubToken String?
+  lastSyncAt  DateTime?
+  syncEnabled Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project                Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  githubCommits          GitHubCommit[]
+  githubPullRequests     GitHubPullRequest[]
+  githubSyncLogs         GitHubSyncLog[]
+  refactoringSuggestions CodeRefactoringSuggestion[]
 
   @@unique([projectId, url])
   @@index([projectId])
 }
 
+model GitHubCommit {
+  id            String   @id @default(uuid()) @db.Uuid
+  repositoryId  String   @db.Uuid
+  sha           String
+  shortSha      String
+  message       String
+  author        String
+  authorEmail   String?
+  committedAt   DateTime
+  branch        String?
+  url           String
+  linkedStoryId String?  @db.Uuid
+  linkedTaskId  String?  @db.Uuid
+  syncedAt      DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  repository  Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  linkedStory UserStory? @relation(fields: [linkedStoryId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  linkedTask  Task?      @relation(fields: [linkedTaskId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([repositoryId, sha])
+  @@index([repositoryId])
+  @@index([linkedStoryId])
+  @@index([linkedTaskId])
+  @@index([committedAt])
+}
+
+model GitHubPullRequest {
+  id              String    @id @default(uuid()) @db.Uuid
+  repositoryId    String    @db.Uuid
+  number          Int
+  title           String
+  state           String
+  author          String
+  sourceBranch    String
+  targetBranch    String
+  url             String
+  createdAtGitHub DateTime
+  closedAtGitHub  DateTime?
+  linkedStoryId   String?   @db.Uuid
+  linkedTaskId    String?   @db.Uuid
+  syncedAt        DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+
+  repository  Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  linkedStory UserStory? @relation(fields: [linkedStoryId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  linkedTask  Task?      @relation(fields: [linkedTaskId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([repositoryId, number])
+  @@index([repositoryId])
+  @@index([linkedStoryId])
+  @@index([linkedTaskId])
+}
+
+model GitHubSyncLog {
+  id           String           @id @default(uuid()) @db.Uuid
+  repositoryId String           @db.Uuid
+  userId       String           @db.Uuid
+  status       GitHubSyncStatus
+  commitsFound Int              @default(0)
+  prsFound     Int              @default(0)
+  errorMessage String?
+  executedAt   DateTime         @default(now())
+
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([repositoryId])
+  @@index([userId])
+  @@index([executedAt])
+}
+
+// -------------------- Sprint Review & Retrospective (HU11) --------------------
+
+model SprintReview {
+  id              String   @id @default(uuid()) @db.Uuid
+  sprintId        String   @unique @db.Uuid
+  date            DateTime
+  participants    String
+  summary         String
+  feedbackGeneral String?
+  createdById     String   @db.Uuid
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  sprint    Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([sprintId])
+  @@index([createdById])
+}
+
+model SprintRetrospective {
+  id              String   @id @default(uuid()) @db.Uuid
+  sprintId        String   @unique @db.Uuid
+  whatWentWell    String
+  whatToImprove   String
+  whatToStopDoing String
+  createdById     String   @db.Uuid
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  sprint             Sprint              @relation(fields: [sprintId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdBy          User                @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  improvementActions ImprovementAction[]
+
+  @@index([sprintId])
+  @@index([createdById])
+}
+
+model ImprovementAction {
+  id              String                  @id @default(uuid()) @db.Uuid
+  retrospectiveId String                  @db.Uuid
+  description     String
+  responsible     String?
+  dueDate         DateTime?
+  status          ImprovementActionStatus @default(PENDING)
+  completedAt     DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  retrospective SprintRetrospective @relation(fields: [retrospectiveId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([retrospectiveId])
+  @@index([status])
+}
+
+// -------------------- PSP Metrics (HU13) --------------------
+
+model DeveloperPSPMetrics {
+  id               String   @id @default(uuid()) @db.Uuid
+  sprintId         String   @db.Uuid
+  userId           String   @db.Uuid
+  tasksCompleted   Int      @default(0)
+  tasksReopened    Int      @default(0)
+  defectsFixed     Int      @default(0)
+  totalEffortHours Int      @default(0)
+  avgTimePerTask   Float?
+  calculatedAt     DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  sprint Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([sprintId, userId])
+  @@index([userId])
+}
+
+// -------------------- Code Refactoring (HU14) --------------------
+
+model CodeRefactoringSuggestion {
+  id           String              @id @default(uuid()) @db.Uuid
+  repositoryId String              @db.Uuid
+  sprintId     String?             @db.Uuid
+  filePath     String
+  description  String
+  severity     RefactoringSeverity
+  tool         String?
+  status       RefactoringStatus   @default(PENDING)
+  resolvedById String?             @db.Uuid
+  resolvedAt   DateTime?
+  lineNumber   Int?
+  category     String?
+  importedAt   DateTime            @default(now())
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  sprint     Sprint?    @relation(fields: [sprintId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  resolvedBy User?      @relation("RefactoringResolver", fields: [resolvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([repositoryId])
+  @@index([sprintId])
+  @@index([status])
+  @@index([resolvedById])
+}
+
+// -------------------- ML Models (HU15) --------------------
+
+model MLDeveloperAssignmentSuggestion {
+  id              String   @id @default(uuid()) @db.Uuid
+  storyId         String   @db.Uuid
+  taskId          String?  @db.Uuid
+  suggestedUserId String   @db.Uuid
+  confidenceScore Float
+  reason          String?
+  wasAccepted     Boolean  @default(false)
+  acceptedById    String?  @db.Uuid
+  generatedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  story         UserStory @relation(fields: [storyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  task          Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  suggestedUser User      @relation("MLSuggestedUser", fields: [suggestedUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  acceptedBy    User?     @relation("MLAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([storyId])
+  @@index([taskId])
+  @@index([suggestedUserId])
+  @@index([generatedAt])
+}
+
+model MLSprintRiskPrediction {
+  id                 String    @id @default(uuid()) @db.Uuid
+  sprintId           String    @db.Uuid
+  riskLevel          RiskLevel
+  confidenceScore    Float
+  factors            Json?
+  committedEffort    Int?
+  teamCapacity       Int?
+  historicalVelocity Float?
+  generatedAt        DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+
+  sprint Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([sprintId])
+  @@index([generatedAt])
+}
+
+model MLTrainingData {
+  id             String     @id @default(uuid()) @db.Uuid
+  sprintId       String     @db.Uuid
+  projectId      String     @db.Uuid
+  developerId    String?    @db.Uuid
+  storyId        String?    @db.Uuid
+  taskId         String?    @db.Uuid
+  dataType       MLDataType
+  features       Json
+  outcome        Json?
+  wasSuccessful  Boolean?
+  completionTime Int?
+  collectedAt    DateTime   @default(now())
+  createdAt      DateTime   @default(now())
+
+  sprint    Sprint     @relation(fields: [sprintId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  developer User?      @relation(fields: [developerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  story     UserStory? @relation(fields: [storyId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  task      Task?      @relation(fields: [taskId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([sprintId])
+  @@index([projectId])
+  @@index([developerId])
+  @@index([dataType])
+  @@index([collectedAt])
+}

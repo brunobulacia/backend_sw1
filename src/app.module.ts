@@ -12,6 +12,12 @@ import { SprintModule } from './sprint/sprint.module';
 import { OAuthGHModule } from './oauth-github/oauthgh.module';
 import { DailyScrumModule } from './daily-scrum/daily-scrum.module';
 import { RepositoriesModule } from './repositories/repositories.module';
+import { SprintReviewModule } from './sprint-review/sprint-review.module';
+import { SprintRetrospectiveModule } from './sprint-retrospective/sprint-retrospective.module';
+import { GitHubSyncModule } from './github-sync/github-sync.module';
+import { PSPMetricsModule } from './psp-metrics/psp-metrics.module';
+import { CodeRefactoringModule } from './code-refactoring/code-refactoring.module';
+import { MLPredictionsModule } from './ml-predictions/ml-predictions.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -27,6 +33,12 @@ import { AppController } from './app.controller';
     OAuthGHModule,
     DailyScrumModule,
     RepositoriesModule,
+    SprintReviewModule,
+    SprintRetrospectiveModule,
+    GitHubSyncModule,
+    PSPMetricsModule,
+    CodeRefactoringModule,
+    MLPredictionsModule,
   ],
   controllers: [AppController],
   providers: [
