@@ -9,6 +9,7 @@ import { EstimationModule } from './estimation/estimation.module';
 import { KanbanModule } from './kanban/kanban.module';
 import { ProjectConfigModule } from './project-config/project-config.module';
 import { SprintModule } from './sprint/sprint.module';
+import { DailyScrumModule } from './daily-scrum/daily-scrum.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -21,6 +22,7 @@ import { AppController } from './app.controller';
     KanbanModule,
     ProjectConfigModule,
     SprintModule,
+    DailyScrumModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,13 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { BurndownChartResponseDto } from '../dto/burndown-response.dto';
 import { ExportFormat } from '../dto/export-burndown.dto';
-import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import PDFDocument from 'pdfkit';
 
 @Injectable()
 export class ChartExportService {
   /**
-   * Exportar el gráfico burndown a imagen (PNG/PDF/SVG)
+   * Exportar el gráfico burndown a PDF con datos textuales
+   * Nota: Se eliminó la generación de imágenes PNG/SVG para evitar dependencias nativas
    */
   async exportBurndownChart(
     burndownData: BurndownChartResponseDto,
@@ -15,173 +15,19 @@ export class ChartExportService {
     width: number = 1200,
     height: number = 600,
   ): Promise<Buffer> {
-    const chartJSNodeCanvas = new ChartJSNodeCanvas({
-      width,
-      height,
-      backgroundColour: 'white',
-    });
-
-    const configuration = this.buildChartConfiguration(burndownData);
-
-    // Generar la imagen según el formato
-    if (format === ExportFormat.PNG) {
-      return await chartJSNodeCanvas.renderToBuffer(configuration);
-    } else if (format === ExportFormat.PDF) {
-      // Para PDF, primero generamos PNG y luego lo convertimos
-      const pngBuffer = await chartJSNodeCanvas.renderToBuffer(configuration);
-      return this.convertToPDF(pngBuffer, burndownData);
-    } else if (format === ExportFormat.SVG) {
-      // SVG requiere configuración especial
-      return Buffer.from(
-        await chartJSNodeCanvas.renderToBufferSync(configuration, 'image/svg+xml'),
-      );
+    // Solo exportamos a PDF con datos textuales
+    if (format === ExportFormat.PDF) {
+      return this.generateTextPDF(burndownData);
     }
 
-    // Fallback por si el formato no coincide
-    return await chartJSNodeCanvas.renderToBuffer(configuration);
+    // Para PNG y SVG, devolvemos un PDF como fallback
+    return this.generateTextPDF(burndownData);
   }
 
   /**
-   * Construir la configuración de Chart.js para el burndown
+   * Generar PDF con datos textuales del burndown (sin gráfico visual)
    */
-  private buildChartConfiguration(
-    burndownData: BurndownChartResponseDto,
-  ): any {
-    const { chartData, sprintInfo, summary } = burndownData;
-
-    // Formatear fechas para el eje X
-    const labels = chartData.dates.map((date) => {
-      const d = new Date(date);
-      return `${d.getDate()}/${d.getMonth() + 1}`;
-    });
-
-    return {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'Línea Ideal',
-            data: chartData.idealLine,
-            borderColor: 'rgb(59, 130, 246)', // blue-500
-            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-            borderWidth: 2,
-            borderDash: [5, 5], // línea punteada
-            pointRadius: 0,
-            tension: 0, // línea recta
-          },
-          {
-            label: 'Línea Real',
-            data: chartData.actualLine,
-            borderColor: 'rgb(239, 68, 68)', // red-500
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            borderWidth: 3,
-            pointRadius: 4,
-            pointBackgroundColor: 'rgb(239, 68, 68)',
-            pointBorderColor: 'white',
-            pointBorderWidth: 2,
-            tension: 0.1, // suavizado leve
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          title: {
-            display: true,
-            text: `Burndown Chart - ${sprintInfo.name}`,
-            font: {
-              size: 20,
-              weight: 'bold',
-            },
-            padding: {
-              top: 10,
-              bottom: 30,
-            },
-          },
-          subtitle: {
-            display: true,
-            text: `${sprintInfo.goal} | Progreso: ${summary.percentageComplete.toFixed(1)}% | ${summary.isOnTrack ? '✓ En tiempo' : '⚠ Retrasado'}`,
-            font: {
-              size: 14,
-            },
-            padding: {
-              bottom: 20,
-            },
-          },
-          legend: {
-            display: true,
-            position: 'top',
-            labels: {
-              usePointStyle: true,
-              padding: 15,
-              font: {
-                size: 12,
-              },
-            },
-          },
-          tooltip: {
-            enabled: true,
-            mode: 'index',
-            intersect: false,
-            callbacks: {
-              label: function (context) {
-                let label = context.dataset.label || '';
-                if (label) {
-                  label += ': ';
-                }
-                label += context.parsed.y.toFixed(1) + ' horas';
-                return label;
-              },
-            },
-          },
-        },
-        scales: {
-          x: {
-            title: {
-              display: true,
-              text: 'Días del Sprint',
-              font: {
-                size: 14,
-                weight: 'bold',
-              },
-            },
-            grid: {
-              display: true,
-              color: 'rgba(0, 0, 0, 0.05)',
-            },
-          },
-          y: {
-            beginAtZero: true,
-            title: {
-              display: true,
-              text: 'Esfuerzo Restante (horas)',
-              font: {
-                size: 14,
-                weight: 'bold',
-              },
-            },
-            grid: {
-              display: true,
-              color: 'rgba(0, 0, 0, 0.1)',
-            },
-            ticks: {
-              callback: function (value) {
-                return value + ' h';
-              },
-            },
-          },
-        },
-      },
-    };
-  }
-
-  /**
-   * Convertir imagen PNG a PDF
-   */
-  private async convertToPDF(
-    imageBuffer: Buffer,
+  private async generateTextPDF(
     burndownData: BurndownChartResponseDto,
   ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
@@ -212,15 +58,7 @@ export class ChartExportService {
         `Duración: ${new Date(burndownData.sprintInfo.startDate).toLocaleDateString()} - ${new Date(burndownData.sprintInfo.endDate).toLocaleDateString()}`,
       );
 
-      doc.moveDown(1);
-
-      // Insertar la imagen del gráfico
-      doc.image(imageBuffer, {
-        fit: [700, 400],
-        align: 'center',
-      });
-
-      doc.moveDown(1);
+      doc.moveDown(2);
 
       // Resumen de métricas
       doc.fontSize(14).text('Resumen de Métricas:', { underline: true });
@@ -240,6 +78,20 @@ export class ChartExportService {
       doc.text(
         `• Estado: ${burndownData.summary.isOnTrack ? '✓ En tiempo' : '⚠ Retrasado'}`,
       );
+
+      doc.moveDown(1.5);
+
+      // Datos del gráfico
+      doc.fontSize(14).text('Datos del Burndown:', { underline: true });
+      doc.moveDown(0.5);
+
+      doc.fontSize(10);
+      const { dates, idealLine, actualLine } = burndownData.chartData;
+      
+      for (let i = 0; i < dates.length; i++) {
+        const date = new Date(dates[i]).toLocaleDateString();
+        doc.text(`${date}: Ideal=${idealLine[i].toFixed(1)}h, Real=${actualLine[i]?.toFixed(1) || 'N/A'}h`);
+      }
 
       // Footer
       doc.fontSize(9).text(
