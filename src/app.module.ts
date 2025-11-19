@@ -11,6 +11,7 @@ import { ProjectConfigModule } from './project-config/project-config.module';
 import { SprintModule } from './sprint/sprint.module';
 import { OAuthGHModule } from './oauth-github/oauthgh.module';
 import { DailyScrumModule } from './daily-scrum/daily-scrum.module';
+import { RepositoriesModule } from './repositories/repositories.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -25,6 +26,7 @@ import { AppController } from './app.controller';
     SprintModule,
     OAuthGHModule,
     DailyScrumModule,
+    RepositoriesModule,
   ],
   controllers: [AppController],
   providers: [

@@ -111,7 +111,7 @@ describe('Daily Scrum (e2e)', () => {
     await testHelper
       .getAuthenticatedRequest(scrumMaster.token)
       .post(`/api/projects/${projectId}/sprints/${sprintId}/start`)
-      .expect(200);
+      .expect(201);
   });
 
   afterAll(async () => {
