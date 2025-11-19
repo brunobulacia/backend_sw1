@@ -10,15 +10,26 @@ import { UpdateSprintDto } from './dto/update-sprint.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { AddStoriesToSprintDto } from './dto/add-stories-to-sprint.dto';
+import { BurndownService } from './metrics/burndown.service';
 
 @Injectable()
 export class SprintService {
+  private burndownService: BurndownService;
+
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * Inyección manual de BurndownService para evitar dependencia circular
+   * Se llama desde el módulo después de la inicialización
+   */
+  setBurndownService(burndownService: BurndownService) {
+    this.burndownService = burndownService;
+  }
 
   /**
    * Verificar acceso del usuario al proyecto
    */
-  private async verifyProjectAccess(projectId: string, userId: string) {
+  async verifyProjectAccess(projectId: string, userId: string) {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       include: {
@@ -515,6 +526,57 @@ export class SprintService {
         },
       },
     });
+  }
+
+  /**
+   * Actualizar estado de una tarea durante el sprint (usado por Kanban)
+   * Este método NO tiene restricciones de sprint.status y actualiza snapshots automáticamente
+   */
+  async updateTaskStatus(
+    taskId: string,
+    status: 'TODO' | 'IN_PROGRESS' | 'DONE',
+    completedAt?: Date,
+  ) {
+    // Obtener la tarea con información del sprint
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        story: {
+          include: {
+            sprint: true,
+          },
+        },
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Tarea no encontrada');
+    }
+
+    // Actualizar la tarea
+    const updatedTask = await this.prisma.task.update({
+      where: { id: taskId },
+      data: {
+        status,
+        completedAt: status === 'DONE' ? completedAt || new Date() : null,
+      },
+    });
+
+    // Si la tarea pertenece a un sprint IN_PROGRESS, actualizar el snapshot
+    if (
+      task.story?.sprint &&
+      task.story.sprint.status === 'IN_PROGRESS' &&
+      this.burndownService
+    ) {
+      try {
+        await this.burndownService.updateSnapshotOnChange(task.story.sprint.id);
+      } catch (error) {
+        console.error('Error actualizando snapshot:', error);
+        // No lanzar error para no interrumpir la actualización de la tarea
+      }
+    }
+
+    return updatedTask;
   }
 
   /**
