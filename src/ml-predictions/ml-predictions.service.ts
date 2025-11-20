@@ -4,15 +4,66 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RiskLevel, MLDataType } from '@prisma/client';
+import { RiskLevel, StoryStatus, TaskStatus } from '@prisma/client';
+import { spawn } from 'child_process';
+import * as path from 'path';
 
 @Injectable()
 export class MLPredictionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
-  /**
-   * Verificar acceso al proyecto
-   */
+
+  private getPythonScriptPath(scriptName: string): string {
+    return path.join(process.cwd(), 'ml', scriptName);
+  }
+
+  private runPython(scriptName: string, payload: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const scriptPath = this.getPythonScriptPath(scriptName);
+      const py = spawn('python', [scriptPath]);
+
+      let stdout = '';
+      let stderr = '';
+      console.log("Ejecutado")
+      py.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      py.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      py.on('close', (code) => {
+        if (code !== 0) {
+          return reject(
+            new Error(
+              `Python (${scriptName}) salió con código ${code}: ${stderr}`,
+            ),
+          );
+        }
+        try {
+          const json = JSON.parse(stdout);
+          console.log(json);
+          resolve(json);
+        } catch (err) {
+          reject(
+            new Error(
+              `Error parseando salida de ${scriptName}: ${(err as Error).message
+              } - OUTPUT: ${stdout}`,
+            ),
+          );
+        }
+      });
+
+      py.stdin.write(JSON.stringify(payload));
+      py.stdin.end();
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verificación de acceso
+  // ---------------------------------------------------------------------------
+
   async verifyProjectAccess(projectId: string, userId: string) {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
@@ -35,10 +86,15 @@ export class MLPredictionsService {
     return { project, isOwner, isMember };
   }
 
+  // ---------------------------------------------------------------------------
+  // 1) SUGERENCIA DE ASIGNACIÓN (HU15) usando modelo ML (assignment_model.joblib)
+  // ---------------------------------------------------------------------------
+
   /**
-   * Generar sugerencia de asignación usando ML
-   * Basado en: tareas similares completadas, carga actual, experiencia en el proyecto
+   * Generar sugerencia de asignación para una tarea,
+   * llamando al modelo de Python (assignment).
    */
+
   async generateAssignmentSuggestion(
     storyId: string,
     taskId: string | undefined,
@@ -47,17 +103,15 @@ export class MLPredictionsService {
     const story = await this.prisma.userStory.findUnique({
       where: { id: storyId },
       include: {
+        sprint: true,
         project: {
           include: {
             members: {
               where: { isActive: true, role: 'DEVELOPER' },
-              include: {
-                user: true,
-              },
+              include: { user: true },
             },
           },
         },
-        tags: true,
       },
     });
 
@@ -68,121 +122,93 @@ export class MLPredictionsService {
     await this.verifyProjectAccess(story.projectId, userId);
 
     const developers = story.project.members;
-    
     if (developers.length === 0) {
       return null;
     }
 
-    // Obtener datos completos de cada developer
-    const developerScores = await Promise.all(
-      developers.map(async (member) => {
-        // Factor 1: Carga actual (tareas activas)
-        const activeTasks = await this.prisma.task.count({
-          where: {
-            assignedToId: member.userId,
-            status: { in: ['TODO', 'IN_PROGRESS'] },
-          },
-        });
+    let task: any = null;
+    if (taskId) {
+      task = await this.prisma.task.findUnique({ where: { id: taskId } });
+      if (!task) {
+        throw new NotFoundException('Tarea no encontrada');
+      }
+    }
 
-        // Factor 2: Tareas similares completadas (por tags)
-        const tagValues = story.tags.map(t => t.value);
-        const similarTasksCompleted = await this.prisma.task.count({
-          where: {
-            assignedToId: member.userId,
-            status: 'DONE',
-            story: {
-              projectId: story.projectId,
-              tags: {
-                some: {
-                  value: { in: tagValues },
-                },
-              },
-            },
-          },
-        });
+    const sprintNumber = story.sprint ? story.sprint.number : 1;
 
-        // Factor 3: Experiencia en el proyecto (total de tareas completadas)
-        const totalCompleted = await this.prisma.task.count({
-          where: {
-            assignedToId: member.userId,
-            status: 'DONE',
-            story: {
-              projectId: story.projectId,
-            },
-          },
-        });
+    type AssignmentPythonResponse = {
+      label: number;
+      probability: number;
+    };
 
-        // Factor 4: Tasa de reapertura (calidad)
-        const reopenedTasks = await this.prisma.task.count({
-          where: {
-            assignedToId: member.userId,
-            reopenCount: { gt: 0 },
-            story: {
-              projectId: story.projectId,
-            },
-          },
-        });
+    // 1) Preparamos todas las features en memoria
+    const featuresList: any[] = [];
+    const devMeta: { developerId: string; displayName: string }[] = [];
 
-        const reopenRate = totalCompleted > 0 ? reopenedTasks / totalCompleted : 0;
+    for (const member of developers) {
+      const user = member.user;
 
-        return {
-          userId: member.userId,
-          user: member.user,
-          activeTasks,
-          similarTasksCompleted,
-          totalCompleted,
-          reopenRate,
-        };
-      }),
+      const developerPastTasksCompleted = await this.prisma.task.count({
+        where: {
+          assignedToId: user.id,
+          status: TaskStatus.DONE,
+          story: { projectId: story.projectId },
+        },
+      });
+
+      const developerPastDefectsFixed = await this.prisma.task.count({
+        where: {
+          assignedToId: user.id,
+          status: TaskStatus.DONE,
+          isBug: true,
+          story: { projectId: story.projectId },
+        },
+      });
+
+      const features = {
+        storyPriority: story.priority,
+        storyBusinessValue: story.businessValue,
+        taskEffort: task?.effort ?? 3,
+        sprintNumber,
+        isBug: task?.isBug ?? false,
+        developerPastTasksCompleted,
+        developerPastDefectsFixed,
+      };
+
+      featuresList.push(features);
+      devMeta.push({
+        developerId: user.id,
+        displayName: `${user.firstName} ${user.lastName}`,
+      });
+    }
+
+    // 2) 🔥 Una sola llamada a Python para todos los devs
+    const pyResult = (await this.runPython('predict_assignment.py', {
+      featuresList,
+    })) as { results: AssignmentPythonResponse[] };
+
+    const candidateResults = devMeta.map((meta, index) => ({
+      developerId: meta.developerId,
+      displayName: meta.displayName,
+      modelOutput: pyResult.results[index],
+    }));
+
+    // 3) Elegimos el dev con mayor probabilidad
+    candidateResults.sort(
+      (a, b) => b.modelOutput.probability - a.modelOutput.probability,
     );
 
-    // Calcular score compuesto para cada developer
-    const scoredDevelopers = developerScores.map((dev) => {
-      // Normalizar factores (0-1)
-      const maxActive = Math.max(...developerScores.map(d => d.activeTasks));
-      const maxSimilar = Math.max(...developerScores.map(d => d.similarTasksCompleted));
-      const maxTotal = Math.max(...developerScores.map(d => d.totalCompleted));
+    const best = candidateResults[0];
 
-      const loadScore = maxActive === 0 ? 1.0 : 1.0 - (dev.activeTasks / maxActive);
-      const similarityScore = maxSimilar === 0 ? 0.5 : (dev.similarTasksCompleted / maxSimilar);
-      const experienceScore = maxTotal === 0 ? 0.3 : (dev.totalCompleted / maxTotal);
-      const qualityScore = 1.0 - dev.reopenRate;
-
-      // Pesos: carga (40%), similitud (30%), experiencia (20%), calidad (10%)
-      const totalScore = 
-        loadScore * 0.4 + 
-        similarityScore * 0.3 + 
-        experienceScore * 0.2 + 
-        qualityScore * 0.1;
-
-      return {
-        ...dev,
-        totalScore,
-        factors: {
-          loadScore,
-          similarityScore,
-          experienceScore,
-          qualityScore,
-        },
-      };
-    });
-
-    // Ordenar por score descendente
-    scoredDevelopers.sort((a, b) => b.totalScore - a.totalScore);
-    const suggestedDeveloper = scoredDevelopers[0];
-
-    const reason = `Carga: ${suggestedDeveloper.activeTasks} tareas. ` +
-      `Experiencia similar: ${suggestedDeveloper.similarTasksCompleted} tareas. ` +
-      `Total completadas: ${suggestedDeveloper.totalCompleted}`;
-
-    // Crear sugerencia
     const suggestion = await this.prisma.mLDeveloperAssignmentSuggestion.create({
       data: {
         storyId,
-        taskId,
-        suggestedUserId: suggestedDeveloper.userId,
-        confidenceScore: suggestedDeveloper.totalScore,
-        reason,
+        taskId: taskId ?? null,
+        suggestedUserId: best.developerId,
+        confidenceScore: best.modelOutput.probability,
+        reason: `Recomendación generada por modelo ML de asignación (probabilidad de éxito ${(best.modelOutput.probability * 100).toFixed(
+          1,
+        )}%).`,
       },
       include: {
         suggestedUser: {
@@ -196,15 +222,20 @@ export class MLPredictionsService {
       },
     });
 
-    // Guardar datos de entrenamiento
-    await this.collectTrainingData(story.projectId, storyId, taskId, MLDataType.ASSIGNMENT);
-
-    return suggestion;
+    return {
+      suggestion,
+      candidates: candidateResults.map((c) => ({
+        developerId: c.developerId,
+        displayName: c.displayName,
+        probability: c.modelOutput.probability,
+        label: c.modelOutput.label,
+      })),
+    };
   }
+  // ---------------------------------------------------------------------------
+  // 2) PREDICCIÓN DE RIESGO DE SPRINT usando modelo ML (risk_model.joblib)
+  // ---------------------------------------------------------------------------
 
-  /**
-   * Generar predicción de riesgo de sprint
-   */
   async generateRiskPrediction(sprintId: string, userId: string) {
     const sprint = await this.prisma.sprint.findUnique({
       where: { id: sprintId },
@@ -228,72 +259,96 @@ export class MLPredictionsService {
 
     await this.verifyProjectAccess(sprint.projectId, userId);
 
-    // Calcular factores de riesgo
     const allTasks = sprint.stories.flatMap((s) => s.tasks);
     const committedEffort = allTasks.reduce((sum, t) => sum + t.effort, 0);
-    const teamCapacity = sprint.capacity || sprint.project.members.length * 40; // 40h por semana por developer
 
-    const unassignedTasks = allTasks.filter((t) => !t.assignedToId).length;
-    const unassignedPercentage = allTasks.length > 0 ? unassignedTasks / allTasks.length : 0;
+    const teamCapacity =
+      sprint.capacity ??
+      sprint.project.members.length * 40; // 40h por dev como aproximación
 
-    // Calcular velocidad histórica
-    const historicalSprints = await this.prisma.sprint.findMany({
+    const bugsOpen = allTasks.filter(
+      (t) => t.isBug && t.status !== TaskStatus.DONE,
+    ).length;
+
+    const missedStories = sprint.stories.filter(
+      (st) => st.status !== StoryStatus.DONE,
+    ).length;
+
+    // Velocidad histórica: promedio de últimos 5 sprints completados del mismo proyecto
+    const previousSprints = await this.prisma.sprint.findMany({
       where: {
         projectId: sprint.projectId,
-        status: 'COMPLETED',
+        number: { lt: sprint.number },
+        actualVelocity: { not: null },
       },
-      select: {
-        actualVelocity: true,
-      },
-      take: 3,
+      select: { actualVelocity: true },
+      orderBy: { number: 'desc' },
+      take: 5,
     });
 
     const historicalVelocity =
-      historicalSprints.length > 0
-        ? historicalSprints.reduce((sum, s) => sum + (s.actualVelocity || 0), 0) /
-          historicalSprints.length
-        : null;
+      previousSprints.length > 0
+        ? previousSprints.reduce(
+          (acc, s) => acc + (s.actualVelocity ?? 0),
+          0,
+        ) / previousSprints.length
+        : 0;
 
-    // Determinar nivel de riesgo (simplificado)
-    let riskLevel: RiskLevel = RiskLevel.LOW;
-    let confidenceScore = 0.7;
+    // Cambios en el equipo: miembros que entraron en los últimos 30 días
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const recentJoiners = await this.prisma.projectMember.count({
+      where: {
+        projectId: sprint.projectId,
+        joinedAt: {
+          gt: new Date(sprint.startDate.getTime() - thirtyDaysMs),
+        },
+      },
+    });
 
-    if (committedEffort > teamCapacity * 1.2) {
-      riskLevel = RiskLevel.HIGH;
-      confidenceScore = 0.9;
-    } else if (committedEffort > teamCapacity || unassignedPercentage > 0.3) {
-      riskLevel = RiskLevel.MEDIUM;
-      confidenceScore = 0.8;
-    }
+    const teamChanges = recentJoiners;
+    const loadRatio =
+      teamCapacity > 0 ? committedEffort / teamCapacity : 1;
 
-    // Crear predicción
+    const features = {
+      committedEffort,
+      teamCapacity,
+      historicalVelocity,
+      missedStories,
+      teamChanges,
+      bugsOpen,
+      loadRatio,
+    };
+
+    type RiskPythonResponse = {
+      label: 'LOW' | 'MEDIUM' | 'HIGH';
+      confidence: number;
+    };
+
+    const modelOutput = (await this.runPython('predict_risk.py', {
+      features,
+    })) as RiskPythonResponse;
+
+    const riskLevel = RiskLevel[modelOutput.label];
+
     const prediction = await this.prisma.mLSprintRiskPrediction.create({
       data: {
         sprintId,
         riskLevel,
-        confidenceScore,
-        factors: {
-          committedEffort,
-          teamCapacity,
-          unassignedTasks,
-          unassignedPercentage,
-          historicalVelocity,
-        },
+        confidenceScore: modelOutput.confidence,
+        factors: features,
         committedEffort,
         teamCapacity,
         historicalVelocity,
       },
     });
 
-    // Guardar datos de entrenamiento
-    await this.collectTrainingData(sprint.projectId, sprintId, null, MLDataType.VELOCITY);
-
     return prediction;
   }
 
-  /**
-   * Obtener sugerencias de asignación de una historia
-   */
+  // ---------------------------------------------------------------------------
+  // 3) Consultas y aceptación de sugerencias (esto casi no toca el modelo)
+  // ---------------------------------------------------------------------------
+
   async getStorySuggestions(storyId: string, userId: string) {
     const story = await this.prisma.userStory.findUnique({
       where: { id: storyId },
@@ -329,9 +384,6 @@ export class MLPredictionsService {
     });
   }
 
-  /**
-   * Obtener predicciones de riesgo de un sprint
-   */
   async getSprintRiskPredictions(sprintId: string, userId: string) {
     const sprint = await this.prisma.sprint.findUnique({
       where: { id: sprintId },
@@ -350,9 +402,6 @@ export class MLPredictionsService {
     });
   }
 
-  /**
-   * Aceptar sugerencia de asignación
-   */
   async acceptSuggestion(suggestionId: string, userId: string) {
     const suggestion =
       await this.prisma.mLDeveloperAssignmentSuggestion.findUnique({
@@ -376,34 +425,4 @@ export class MLPredictionsService {
       },
     });
   }
-
-  /**
-   * Recolectar datos de entrenamiento
-   */
-  private async collectTrainingData(
-    projectId: string,
-    storyId: string | null,
-    taskId: string | null | undefined,
-    dataType: MLDataType,
-  ) {
-    const features: any = {
-      timestamp: new Date().toISOString(),
-      dataType,
-    };
-
-    await this.prisma.mLTrainingData.create({
-      data: {
-        projectId,
-        sprintId: storyId ? (await this.prisma.userStory.findUnique({
-          where: { id: storyId },
-          select: { sprintId: true },
-        }))?.sprintId || projectId : projectId,
-        storyId,
-        taskId: taskId || null,
-        dataType,
-        features,
-      },
-    });
-  }
 }
-
