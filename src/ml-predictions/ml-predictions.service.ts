@@ -10,8 +10,7 @@ import * as path from 'path';
 
 @Injectable()
 export class MLPredictionsService {
-  constructor(private prisma: PrismaService) { }
-
+  constructor(private prisma: PrismaService) {}
 
   private getPythonScriptPath(scriptName: string): string {
     return path.join(process.cwd(), 'ml', scriptName);
@@ -20,11 +19,13 @@ export class MLPredictionsService {
   private runPython(scriptName: string, payload: any): Promise<any> {
     return new Promise((resolve, reject) => {
       const scriptPath = this.getPythonScriptPath(scriptName);
-      const py = spawn('python', [scriptPath]);
+      // Use python3 for Linux environments (Railway, Docker), falls back to python on Windows
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      const py = spawn(pythonCmd, [scriptPath]);
 
       let stdout = '';
       let stderr = '';
-      console.log("Ejecutado")
+      console.log('Ejecutado');
       py.stdout.on('data', (data) => {
         stdout += data.toString();
       });
@@ -48,7 +49,8 @@ export class MLPredictionsService {
         } catch (err) {
           reject(
             new Error(
-              `Error parseando salida de ${scriptName}: ${(err as Error).message
+              `Error parseando salida de ${scriptName}: ${
+                (err as Error).message
               } - OUTPUT: ${stdout}`,
             ),
           );
@@ -200,27 +202,29 @@ export class MLPredictionsService {
 
     const best = candidateResults[0];
 
-    const suggestion = await this.prisma.mLDeveloperAssignmentSuggestion.create({
-      data: {
-        storyId,
-        taskId: taskId ?? null,
-        suggestedUserId: best.developerId,
-        confidenceScore: best.modelOutput.probability,
-        reason: `Recomendación generada por modelo ML de asignación (probabilidad de éxito ${(best.modelOutput.probability * 100).toFixed(
-          1,
-        )}%).`,
-      },
-      include: {
-        suggestedUser: {
-          select: {
-            id: true,
-            username: true,
-            firstName: true,
-            lastName: true,
+    const suggestion = await this.prisma.mLDeveloperAssignmentSuggestion.create(
+      {
+        data: {
+          storyId,
+          taskId: taskId ?? null,
+          suggestedUserId: best.developerId,
+          confidenceScore: best.modelOutput.probability,
+          reason: `Recomendación generada por modelo ML de asignación (probabilidad de éxito ${(
+            best.modelOutput.probability * 100
+          ).toFixed(1)}%).`,
+        },
+        include: {
+          suggestedUser: {
+            select: {
+              id: true,
+              username: true,
+              firstName: true,
+              lastName: true,
+            },
           },
         },
       },
-    });
+    );
 
     return {
       suggestion,
@@ -262,9 +266,7 @@ export class MLPredictionsService {
     const allTasks = sprint.stories.flatMap((s) => s.tasks);
     const committedEffort = allTasks.reduce((sum, t) => sum + t.effort, 0);
 
-    const teamCapacity =
-      sprint.capacity ??
-      sprint.project.members.length * 40; // 40h por dev como aproximación
+    const teamCapacity = sprint.capacity ?? sprint.project.members.length * 40; // 40h por dev como aproximación
 
     const bugsOpen = allTasks.filter(
       (t) => t.isBug && t.status !== TaskStatus.DONE,
@@ -288,10 +290,8 @@ export class MLPredictionsService {
 
     const historicalVelocity =
       previousSprints.length > 0
-        ? previousSprints.reduce(
-          (acc, s) => acc + (s.actualVelocity ?? 0),
-          0,
-        ) / previousSprints.length
+        ? previousSprints.reduce((acc, s) => acc + (s.actualVelocity ?? 0), 0) /
+          previousSprints.length
         : 0;
 
     // Cambios en el equipo: miembros que entraron en los últimos 30 días

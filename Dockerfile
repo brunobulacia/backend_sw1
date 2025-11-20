@@ -24,6 +24,11 @@ FROM node:22
 
 WORKDIR /usr/src/app
 
+# Install Python 3 and pip
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip python3-venv && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy package files
 COPY package*.json ./
 COPY prisma ./prisma
@@ -37,6 +42,13 @@ COPY --from=builder /usr/src/app/node_modules/.prisma ./node_modules/.prisma
 
 # Generate Prisma client for production
 RUN npx prisma generate
+
+# Copy Python scripts and ML models
+COPY ml ./ml
+COPY requirements.txt ./
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Expose port
 EXPOSE 8080
