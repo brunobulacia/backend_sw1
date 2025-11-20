@@ -280,7 +280,8 @@ export class AuthService {
 
     if (rateLimited) {
       throw new HttpException(
-        'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.', HttpStatus.TOO_MANY_REQUESTS
+        'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.',
+        HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
@@ -294,7 +295,8 @@ export class AuthService {
 
     if (!result) {
       throw new HttpException(
-        'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.', HttpStatus.TOO_MANY_REQUESTS
+        'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.',
+        HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
@@ -408,18 +410,21 @@ export class AuthService {
     }
 
     const since = new Date(Date.now() - RESET_REQUEST_LIMIT_MS);
-    const existingToken = await this.prismaService.passwordResetToken.findFirst({
-      where: {
-        userId: user.id,
-        createdAt: { gte: since },
-        usedAt: null,
+    const existingToken = await this.prismaService.passwordResetToken.findFirst(
+      {
+        where: {
+          userId: user.id,
+          createdAt: { gte: since },
+          usedAt: null,
+        },
       },
-    });
+    );
 
     if (existingToken) {
       if (options.raiseOnRateLimit) {
         throw new HttpException(
-          'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.', HttpStatus.TOO_MANY_REQUESTS
+          'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.',
+          HttpStatus.TOO_MANY_REQUESTS,
         );
       }
       return null;
@@ -506,11 +511,136 @@ export class AuthService {
 
     if (limited && params.throwOnLimit) {
       throw new HttpException(
-        'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.', HttpStatus.TOO_MANY_REQUESTS
+        'Ya se envio recientemente un enlace de recuperacion. Intenta nuevamente en unos minutos.',
+        HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
     return Boolean(limited);
+  }
+
+  // ---------- GitHub OAuth ----------
+  async githubAuth(
+    accessToken: string,
+  ): Promise<{ access_token: string; user: SafeUser }> {
+    if (!accessToken) {
+      throw new BadRequestException('Access token is required');
+    }
+
+    try {
+      // Obtener datos del usuario de GitHub
+      const userResponse = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `token ${accessToken}`,
+          'User-Agent': 'YourApp/1.0',
+        },
+      });
+
+      if (!userResponse.ok) {
+        throw new UnauthorizedException('Invalid GitHub access token');
+      }
+
+      const githubUser = await userResponse.json();
+      console.log('GitHub user data:', githubUser);
+
+      if (!githubUser.login) {
+        throw new BadRequestException(
+          `GitHub user data incomplete: missing login. Received: ${JSON.stringify(githubUser)}`,
+        );
+      }
+
+      if (!githubUser.email) {
+        // Si no hay email público, intentar obtener emails privados
+        const emailResponse = await fetch(
+          'https://api.github.com/user/emails',
+          {
+            headers: {
+              Authorization: `token ${accessToken}`,
+              'User-Agent': 'YourApp/1.0',
+            },
+          },
+        );
+
+        if (emailResponse.ok) {
+          const emails = await emailResponse.json();
+          console.log('GitHub emails:', emails);
+          const primaryEmail = emails.find((email: any) => email.primary);
+          if (primaryEmail) {
+            githubUser.email = primaryEmail.email;
+          }
+        }
+
+        if (!githubUser.email) {
+          throw new BadRequestException(
+            `GitHub user data incomplete: missing email. User must have a public email or grant email access. Received: ${JSON.stringify(githubUser)}`,
+          );
+        }
+      }
+
+      const normalizedEmail = githubUser.email.trim().toLowerCase();
+
+      // Buscar usuario existente por email o GitHub username
+      let user = await this.prismaService.user.findFirst({
+        where: {
+          OR: [
+            { email: normalizedEmail },
+            { githubUsername: githubUser.login },
+          ],
+        },
+      });
+
+      if (user) {
+        // Usuario existe, actualizar datos de GitHub si es necesario
+        if (!user.githubUsername || user.githubUsername !== githubUser.login) {
+          user = await this.prismaService.user.update({
+            where: { id: user.id },
+            data: {
+              githubUsername: githubUser.login,
+              lastLogin: new Date(),
+            },
+          });
+        } else {
+          // Solo actualizar last login
+          user = await this.prismaService.user.update({
+            where: { id: user.id },
+            data: { lastLogin: new Date() },
+          });
+        }
+      } else {
+        // Crear nuevo usuario
+        const tempPassword = await bcrypt.hash(Math.random().toString(36), 10);
+        user = await this.prismaService.user.create({
+          data: {
+            email: normalizedEmail,
+            username: githubUser.login,
+            password: tempPassword, // Password temporal, el usuario deberá usar GitHub OAuth
+            firstName: githubUser.name?.split(' ')[0] || githubUser.login,
+            lastName: githubUser.name?.split(' ').slice(1).join(' ') || '',
+            timezone: 'UTC', // Default timezone
+            githubUsername: githubUser.login,
+            isAdmin: false,
+            isActive: true,
+            passwordChangedAt: new Date(),
+            lastLogin: new Date(),
+          },
+        });
+      }
+
+      if (!user.isActive) {
+        throw new ForbiddenException('User account is disabled');
+      }
+
+      return {
+        access_token: this.sign(user),
+        user: this.sanitize(user),
+      };
+    } catch (error) {
+      console.error('GitHub Auth Error:', error);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new UnauthorizedException('Failed to authenticate with GitHub');
+    }
   }
 
   // ---------- Perfil ----------
@@ -522,9 +652,3 @@ export class AuthService {
     return this.sanitize(user);
   }
 }
-
-
-
-
-
-

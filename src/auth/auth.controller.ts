@@ -68,6 +68,12 @@ export class AuthController {
     return this.authService.validatePasswordResetToken(token ?? '');
   }
 
+  @Public()
+  @Post('github')
+  githubAuth(@Body() dto: { accessToken: string }) {
+    return this.authService.githubAuth(dto.accessToken);
+  }
+
   @UseGuards(AdminGuard)
   @Post('admin/create-user')
   createUserAsAdmin(@Body() dto: CreateUserDto) {
