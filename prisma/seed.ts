@@ -1,1026 +1,969 @@
-import { PrismaClient, ProjectMemberRole, StoryStatus } from '@prisma/client';
+// prisma/seed.ts
+import {
+  PrismaClient,
+  ProjectVisibility,
+  ProjectStatus,
+  ProjectMemberRole,
+  StoryStatus,
+  EstimationMethod,
+  SessionStatus,
+  SprintStatus,
+  TaskStatus,
+  ImprovementActionStatus,
+  GitHubSyncStatus,
+  RefactoringSeverity,
+  RefactoringStatus,
+  RiskLevel,
+  MLDataType,
+  User,
+  Sprint,
+  UserStory,
+  Task,
+} from '@prisma/client';
+
 import * as bcrypt from 'bcrypt';
+
+// -----------------------------------------------------------------------------
+// CONFIGURACIÓN DEL SEED (AJUSTA ESTO PARA TENER MÁS / MENOS DATOS)
+// -----------------------------------------------------------------------------
+
+const SEED_CONFIG = {
+  NUM_PROJECTS: 8,
+  SPRINTS_PER_PROJECT: 10,
+  STORIES_PER_SPRINT: 15,
+  TASKS_PER_STORY: 6,
+  DAILY_SCRUM_DAYS: 5,
+  BCRYPT_ROUNDS: 10,
+};
+
+const BASE_DATE = new Date('2025-01-06T13:00:00.000Z');
+
+// -----------------------------------------------------------------------------
+// UTILIDADES
+// -----------------------------------------------------------------------------
 
 const prisma = new PrismaClient();
 
+function addDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+type SeedUser = {
+  email: string;
+  username: string;
+  password: string; // en plano, se hashea con bcrypt
+  firstName: string;
+  lastName: string;
+  timezone: string;
+  githubUsername?: string | null;
+  isAdmin?: boolean;
+};
+
+// -----------------------------------------------------------------------------
+// MAIN
+// -----------------------------------------------------------------------------
+
 async function main() {
-  console.log('🌱 Iniciando seed de la base de datos...\n');
+  console.log(
+    '🚀 Seeding base de datos para Scrum Planning Poker & ML (HU15)...',
+  );
 
-  // ============================================================
-  // 1. CREAR USUARIOS
-  // ============================================================
-  console.log('👤 Creando usuarios...');
-
-  // Usuario Administrador
-  const adminPassword = await bcrypt.hash('Admin123456', 10);
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@proyecto.com' },
-    update: {},
-    create: {
-      email: 'admin@proyecto.com',
+  // ---------------------------------------------------------------------------
+  // 1. Usuarios base (PO, SM, devs, admin) - contraseñas hasheadas con bcrypt
+  // ---------------------------------------------------------------------------
+  const usersData: SeedUser[] = [
+    {
+      email: 'admin@example.com',
       username: 'admin',
-      password: adminPassword,
-      firstName: 'Admin',
-      lastName: 'Sistema',
-      timezone: 'America/La_Paz',
-      isAdmin: true,
-      isActive: true,
-      passwordChangedAt: new Date(),
-    },
-  });
-  console.log('  ✅ Admin creado:', admin.email);
-
-  // Product Owner
-  const poPassword = await bcrypt.hash('ProductOwner123', 10);
-  const productOwner = await prisma.user.upsert({
-    where: { email: 'po@proyecto.com' },
-    update: {},
-    create: {
-      email: 'po@proyecto.com',
-      username: 'product_owner',
-      password: poPassword,
-      firstName: 'Carlos',
-      lastName: 'Mendoza',
-      timezone: 'America/La_Paz',
-      isAdmin: false,
-      isActive: true,
-      passwordChangedAt: new Date(),
-    },
-  });
-  console.log('  ✅ Product Owner creado:', productOwner.email);
-
-  // Scrum Master
-  const smPassword = await bcrypt.hash('ScrumMaster123', 10);
-  const scrumMaster = await prisma.user.upsert({
-    where: { email: 'sm@proyecto.com' },
-    update: {},
-    create: {
-      email: 'sm@proyecto.com',
-      username: 'scrum_master',
-      password: smPassword,
+      password: 'Admin123!',
       firstName: 'Ana',
-      lastName: 'Rodriguez',
+      lastName: 'Admin',
       timezone: 'America/La_Paz',
-      isAdmin: false,
-      isActive: true,
-      passwordChangedAt: new Date(),
+      githubUsername: null,
+      isAdmin: true,
     },
-  });
-  console.log('  ✅ Scrum Master creado:', scrumMaster.email);
-
-  // Desarrollador 1
-  const dev1Password = await bcrypt.hash('Developer123', 10);
-  const developer1 = await prisma.user.upsert({
-    where: { email: 'dev1@proyecto.com' },
-    update: {},
-    create: {
-      email: 'dev1@proyecto.com',
-      username: 'developer1',
-      password: dev1Password,
-      firstName: 'Juan',
-      lastName: 'Perez',
+    {
+      email: 'po@example.com',
+      username: 'product_owner',
+      password: 'Po123!',
+      firstName: 'Pablo',
+      lastName: 'Owner',
       timezone: 'America/La_Paz',
-      isAdmin: false,
-      isActive: true,
-      passwordChangedAt: new Date(),
+      githubUsername: null,
     },
-  });
-  console.log('  ✅ Developer 1 creado:', developer1.email);
-
-  // Desarrollador 2
-  const dev2Password = await bcrypt.hash('Developer123', 10);
-  const developer2 = await prisma.user.upsert({
-    where: { email: 'dev2@proyecto.com' },
-    update: {},
-    create: {
-      email: 'dev2@proyecto.com',
-      username: 'developer2',
-      password: dev2Password,
-      firstName: 'Maria',
-      lastName: 'Garcia',
+    {
+      email: 'sm@example.com',
+      username: 'scrum_master',
+      password: 'Sm123!',
+      firstName: 'Sara',
+      lastName: 'Scrum',
       timezone: 'America/La_Paz',
-      isAdmin: false,
-      isActive: true,
-      passwordChangedAt: new Date(),
+      githubUsername: null,
     },
-  });
-  console.log('  ✅ Developer 2 creado:', developer2.email);
-
-  // Desarrollador 3
-  const dev3Password = await bcrypt.hash('Developer123', 10);
-  const developer3 = await prisma.user.upsert({
-    where: { email: 'dev3@proyecto.com' },
-    update: {},
-    create: {
-      email: 'dev3@proyecto.com',
-      username: 'developer3',
-      password: dev3Password,
-      firstName: 'Luis',
-      lastName: 'Martinez',
+    {
+      email: 'alice@example.com',
+      username: 'alice_dev',
+      password: 'Dev123!',
+      firstName: 'Alice',
+      lastName: 'Dev',
       timezone: 'America/La_Paz',
-      githubUsername: 'luismartinez',
-      isAdmin: false,
-      isActive: true,
-      passwordChangedAt: new Date(),
+      githubUsername: 'alice-dev',
     },
-  });
-  console.log('  ✅ Developer 3 creado:', developer3.email);
-
-  // Usuario Regular (sin proyecto asignado)
-  const userPassword = await bcrypt.hash('User123456', 10);
-  const regularUser = await prisma.user.upsert({
-    where: { email: 'user@proyecto.com' },
-    update: {},
-    create: {
-      email: 'user@proyecto.com',
-      username: 'usuario_regular',
-      password: userPassword,
-      firstName: 'Pedro',
-      lastName: 'Lopez',
+    {
+      email: 'bruno@example.com',
+      username: 'bruno_dev',
+      password: 'Dev123!',
+      firstName: 'Bruno',
+      lastName: 'Dev',
       timezone: 'America/La_Paz',
-      isAdmin: false,
-      isActive: true,
-      passwordChangedAt: new Date(),
+      githubUsername: 'bruno-dev',
     },
+    {
+      email: 'carla@example.com',
+      username: 'carla_dev',
+      password: 'Dev123!',
+      firstName: 'Carla',
+      lastName: 'Dev',
+      timezone: 'America/La_Paz',
+      githubUsername: 'carla-dev',
+    },
+  ];
+
+  const users: User[] = [];
+  for (const u of usersData) {
+    const hashedPassword = await bcrypt.hash(
+      u.password,
+      SEED_CONFIG.BCRYPT_ROUNDS,
+    );
+
+    const user = await prisma.user.create({
+      data: {
+        email: u.email,
+        username: u.username,
+        password: hashedPassword,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        timezone: u.timezone,
+        githubUsername: u.githubUsername ?? undefined,
+        isAdmin: u.isAdmin ?? false,
+        isActive: true,
+      },
+    });
+
+    users.push(user);
+  }
+
+  const [admin, po, sm, dev1, dev2, dev3] = users;
+
+  // ---------------------------------------------------------------------------
+  // 2. Roles de sistema
+  // ---------------------------------------------------------------------------
+  await prisma.role.createMany({
+    data: [
+      {
+        name: 'Administrador',
+        code: 'ADMIN',
+        description: 'Acceso completo al sistema',
+        permission: {
+          canManageUsers: true,
+          canConfigureSystem: true,
+          canSeeAllProjects: true,
+        },
+        isSystemRole: true,
+        createdById: admin.id,
+      },
+      {
+        name: 'Product Owner',
+        code: 'PO',
+        description: 'Gestiona el backlog y prioridades',
+        permission: {
+          canManageBacklog: true,
+          canManageReleases: true,
+        },
+        isSystemRole: true,
+        createdById: admin.id,
+      },
+      {
+        name: 'Scrum Master',
+        code: 'SM',
+        description: 'Facilita eventos Scrum',
+        permission: {
+          canManageScrumEvents: true,
+          canSeeMetrics: true,
+        },
+        isSystemRole: true,
+        createdById: admin.id,
+      },
+    ],
   });
-  console.log('  ✅ Usuario Regular creado:', regularUser.email);
 
-  // ============================================================
-  // 2. CREAR PROYECTOS
-  // ============================================================
-  console.log('\n📦 Creando proyectos...');
-
-  // Proyecto 1: Sistema de Gestión Ágil
-  const project1 = await prisma.project.upsert({
-    where: { code: 'SGA-2025' },
-    update: {},
-    create: {
-      code: 'SGA-2025',
-      name: 'Sistema de Gestión Ágil',
-      description:
-        'Plataforma web para gestionar proyectos siguiendo metodologías ágiles como Scrum',
-      visibility: 'PRIVATE',
+  // ---------------------------------------------------------------------------
+  // 3. Proyectos base (plantillas) - se usará hasta NUM_PROJECTS
+  // ---------------------------------------------------------------------------
+  const projectTemplates = [
+    {
+      code: 'FICCT-PP',
+      name: 'Sistema de Planning Poker FICCT',
+      description: 'Plataforma para estimar historias con Planning Poker.',
+      visibility: ProjectVisibility.PRIVATE,
+      sprintDuration: 14,
       productObjective:
-        'Facilitar la planificación y seguimiento de proyectos Scrum para equipos de desarrollo de software',
-      definitionOfDone:
-        'Código revisado, tests pasando, documentación actualizada, desplegado en staging',
-      sprintDuration: 2,
-      qualityCriteria:
-        'Cobertura de tests >80%, sin errores críticos de seguridad, UI responsiva',
-      status: 'ACTIVE',
-      startDate: new Date('2025-01-15'),
-      endDate: new Date('2025-06-30'),
-      ownerId: productOwner.id,
+        'Mejorar la precisión de las estimaciones de las materias de la facultad.',
     },
-  });
-  console.log('  ✅ Proyecto creado:', project1.name);
-
-  // Equipo del Proyecto 1
-  await prisma.projectMember.upsert({
-    where: {
-      projectId_userId: {
-        projectId: project1.id,
-        userId: productOwner.id,
-      },
-    },
-    update: {},
-    create: {
-      projectId: project1.id,
-      userId: productOwner.id,
-      role: ProjectMemberRole.PRODUCT_OWNER,
-      isActive: true,
-    },
-  });
-
-  await prisma.projectMember.upsert({
-    where: {
-      projectId_userId: {
-        projectId: project1.id,
-        userId: scrumMaster.id,
-      },
-    },
-    update: {},
-    create: {
-      projectId: project1.id,
-      userId: scrumMaster.id,
-      role: ProjectMemberRole.SCRUM_MASTER,
-      isActive: true,
-    },
-  });
-
-  await prisma.projectMember.upsert({
-    where: {
-      projectId_userId: {
-        projectId: project1.id,
-        userId: developer1.id,
-      },
-    },
-    update: {},
-    create: {
-      projectId: project1.id,
-      userId: developer1.id,
-      role: ProjectMemberRole.DEVELOPER,
-      isActive: true,
-    },
-  });
-
-  await prisma.projectMember.upsert({
-    where: {
-      projectId_userId: {
-        projectId: project1.id,
-        userId: developer2.id,
-      },
-    },
-    update: {},
-    create: {
-      projectId: project1.id,
-      userId: developer2.id,
-      role: ProjectMemberRole.DEVELOPER,
-      isActive: true,
-    },
-  });
-
-  await prisma.projectMember.upsert({
-    where: {
-      projectId_userId: {
-        projectId: project1.id,
-        userId: developer3.id,
-      },
-    },
-    update: {},
-    create: {
-      projectId: project1.id,
-      userId: developer3.id,
-      role: ProjectMemberRole.DEVELOPER,
-      isActive: true,
-    },
-  });
-
-  console.log('    ✅ Equipo asignado (5 miembros)');
-
-  // Proyecto 2: E-Commerce Platform
-  const project2 = await prisma.project.upsert({
-    where: { code: 'ECP-2025' },
-    update: {},
-    create: {
-      code: 'ECP-2025',
-      name: 'E-Commerce Platform',
-      description:
-        'Plataforma de comercio electrónico con gestión de inventario y pagos',
-      visibility: 'PUBLIC',
+    {
+      code: 'FICCT-SCRM',
+      name: 'Gestor de Proyectos Scrum',
+      description: 'Aplicación para gestionar proyectos Scrum académicos.',
+      visibility: ProjectVisibility.PUBLIC,
+      sprintDuration: 14,
       productObjective:
-        'Crear una plataforma escalable para ventas en línea con integración de múltiples métodos de pago',
-      definitionOfDone:
-        'Feature completa, tests E2E pasando, documentación API actualizada',
-      sprintDuration: 2,
-      qualityCriteria:
-        'Performance <2s carga página, tests de integración completos, accesibilidad WCAG 2.1',
-      status: 'PLANNING',
-      startDate: new Date('2025-02-01'),
-      endDate: new Date('2025-08-31'),
-      ownerId: productOwner.id,
+        'Centralizar la planificación de trabajos prácticos y proyectos.',
     },
-  });
-  console.log('  ✅ Proyecto creado:', project2.name);
-
-  // Equipo del Proyecto 2 (más pequeño)
-  await prisma.projectMember.upsert({
-    where: {
-      projectId_userId: {
-        projectId: project2.id,
-        userId: productOwner.id,
-      },
-    },
-    update: {},
-    create: {
-      projectId: project2.id,
-      userId: productOwner.id,
-      role: ProjectMemberRole.PRODUCT_OWNER,
-      isActive: true,
-    },
-  });
-
-  await prisma.projectMember.upsert({
-    where: {
-      projectId_userId: {
-        projectId: project2.id,
-        userId: developer1.id,
-      },
-    },
-    update: {},
-    create: {
-      projectId: project2.id,
-      userId: developer1.id,
-      role: ProjectMemberRole.DEVELOPER,
-      isActive: true,
-    },
-  });
-
-  console.log('    ✅ Equipo asignado (2 miembros)');
-
-  // ============================================================
-  // 3. CREAR HISTORIAS DE USUARIO
-  // ============================================================
-  console.log('\n📝 Creando historias de usuario...');
-
-  // Historias para Proyecto 1
-  const story1 = await prisma.userStory.create({
-    data: {
-      projectId: project1.id,
-      code: 'US-001',
-      title: 'Login de usuarios en el sistema',
-      asA: 'Usuario del sistema',
-      iWant: 'Poder iniciar sesión con email y contraseña',
-      soThat: 'Pueda acceder a las funcionalidades protegidas',
-      acceptanceCriteria: [
-        'El usuario puede ingresar email y contraseña',
-        'El sistema valida las credenciales',
-        'Se genera un token JWT válido',
-        'El token expira después de 7 días',
-        'Se muestra error si las credenciales son incorrectas',
-      ].join('\n'),
-      description: 'Sistema de autenticación básico con JWT',
-      priority: 1,
-      businessValue: 100,
-      orderRank: 1,
-      estimateHours: 8,
-      status: StoryStatus.DONE,
-    },
-  });
-
-  await prisma.userStoryTag.createMany({
-    data: [
-      { storyId: story1.id, value: 'autenticación' },
-      { storyId: story1.id, value: 'seguridad' },
-      { storyId: story1.id, value: 'backend' },
-    ],
-  });
-
-  const story2 = await prisma.userStory.create({
-    data: {
-      projectId: project1.id,
-      code: 'US-002',
-      title: 'Crear nuevo proyecto',
-      asA: 'Product Owner',
-      iWant: 'Crear un nuevo proyecto con su equipo',
-      soThat: 'Pueda comenzar a gestionar historias de usuario',
-      acceptanceCriteria: [
-        'Ingresar nombre, descripción y objetivo del producto',
-        'Definir duración del sprint (1-4 semanas)',
-        'Asignar miembros del equipo con sus roles',
-        'Validar que haya un Product Owner',
-        'Validar que no haya más de un Scrum Master',
-      ].join('\n'),
+    {
+      code: 'FICCT-ML',
+      name: 'Motor de Recomendación ML',
       description:
-        'Funcionalidad completa para crear y configurar un nuevo proyecto Scrum',
-      priority: 2,
-      businessValue: 90,
-      orderRank: 2,
-      estimateHours: 16,
-      status: StoryStatus.DONE,
+        'Módulo ML para sugerir asignación de tareas y predecir riesgos de sprint.',
+      visibility: ProjectVisibility.PRIVATE,
+      sprintDuration: 14,
+      productObjective:
+        'Recomendar el mejor desarrollador para cada tarea y detectar sprints en riesgo.',
     },
-  });
+  ];
 
-  await prisma.userStoryTag.createMany({
-    data: [
-      { storyId: story2.id, value: 'proyectos' },
-      { storyId: story2.id, value: 'gestión' },
-      { storyId: story2.id, value: 'backend' },
-    ],
-  });
+  let globalStoryCounter = 1;
+  let globalTaskCounter = 1;
 
-  const story3 = await prisma.userStory.create({
-    data: {
-      projectId: project1.id,
-      code: 'US-003',
-      title: 'Gestionar historias de usuario',
-      asA: 'Product Owner',
-      iWant: 'Crear, editar y eliminar historias de usuario',
-      soThat: 'Pueda mantener el product backlog actualizado',
-      acceptanceCriteria: [
-        'Crear historia con formato: Como [rol] quiero [funcionalidad] para [beneficio]',
-        'Definir criterios de aceptación',
-        'Asignar prioridad y valor de negocio',
-        'Agregar tags para categorización',
-        'Reordenar historias por prioridad',
-      ].join('\n'),
-      description: 'CRUD completo de historias de usuario con reordenamiento',
-      priority: 3,
-      businessValue: 85,
-      orderRank: 3,
-      estimateHours: 20,
-      status: StoryStatus.IN_PROGRESS,
-    },
-  });
+  const projectCount = Math.min(
+    SEED_CONFIG.NUM_PROJECTS,
+    projectTemplates.length,
+  );
 
-  await prisma.userStoryTag.createMany({
-    data: [
-      { storyId: story3.id, value: 'historias' },
-      { storyId: story3.id, value: 'backlog' },
-      { storyId: story3.id, value: 'backend' },
-    ],
-  });
+  for (let i = 0; i < projectCount; i++) {
+    const tmpl = projectTemplates[i];
+    const projectStart = addDays(BASE_DATE, i * 28);
 
-  const story4 = await prisma.userStory.create({
-    data: {
-      projectId: project1.id,
-      code: 'US-004',
-      title: 'Sesión de Planning Poker',
-      asA: 'Scrum Master',
-      iWant: 'Facilitar sesiones de estimación con Planning Poker',
-      soThat:
-        'El equipo pueda estimar historias de manera colaborativa y consensuada',
-      acceptanceCriteria: [
-        'Crear sesión vinculada a una historia de usuario',
-        'Seleccionar método de estimación (Fibonacci, T-Shirt, etc)',
-        'Los miembros pueden votar de forma anónima',
-        'Revelar votos simultáneamente',
-        'Registrar la estimación final consensuada',
-      ].join('\n'),
-      description:
-        'Sistema completo de Planning Poker con votación anónima y revelación simultánea',
-      priority: 4,
-      businessValue: 80,
-      orderRank: 4,
-      estimateHours: 24,
-      status: StoryStatus.BACKLOG,
-    },
-  });
-
-  await prisma.userStoryTag.createMany({
-    data: [
-      { storyId: story4.id, value: 'estimación' },
-      { storyId: story4.id, value: 'planning-poker' },
-      { storyId: story4.id, value: 'backend' },
-      { storyId: story4.id, value: 'websockets' },
-    ],
-  });
-
-  const story5 = await prisma.userStory.create({
-    data: {
-      projectId: project1.id,
-      code: 'US-005',
-      title: 'Dashboard del proyecto',
-      asA: 'Miembro del equipo',
-      iWant: 'Ver un resumen visual del estado del proyecto',
-      soThat: 'Pueda entender rápidamente el progreso y métricas clave',
-      acceptanceCriteria: [
-        'Mostrar burndown chart del sprint actual',
-        'Indicadores de historias por estado',
-        'Velocidad del equipo (últimos 3 sprints)',
-        'Lista de historias en riesgo',
-        'Gráfico de distribución de trabajo',
-      ].join('\n'),
-      description:
-        'Dashboard con métricas ágiles y visualización del progreso del proyecto',
-      priority: 5,
-      businessValue: 70,
-      orderRank: 5,
-      estimateHours: 30,
-      status: StoryStatus.BACKLOG,
-    },
-  });
-
-  await prisma.userStoryTag.createMany({
-    data: [
-      { storyId: story5.id, value: 'dashboard' },
-      { storyId: story5.id, value: 'métricas' },
-      { storyId: story5.id, value: 'frontend' },
-      { storyId: story5.id, value: 'visualización' },
-    ],
-  });
-
-  console.log('  ✅ 5 historias creadas para', project1.name);
-
-  // Historias para Proyecto 2
-  const story6 = await prisma.userStory.create({
-    data: {
-      projectId: project2.id,
-      code: 'US-001',
-      title: 'Catálogo de productos',
-      asA: 'Cliente',
-      iWant: 'Ver el catálogo de productos disponibles',
-      soThat: 'Pueda explorar y seleccionar productos para comprar',
-      acceptanceCriteria: [
-        'Mostrar productos con imagen, nombre y precio',
-        'Filtrar por categorías',
-        'Buscar por nombre o descripción',
-        'Ordenar por precio, popularidad, novedad',
-        'Paginación de resultados',
-      ].join('\n'),
-      description: 'Listado de productos con filtros y búsqueda',
-      priority: 1,
-      businessValue: 100,
-      orderRank: 1,
-      estimateHours: 12,
-      status: StoryStatus.BACKLOG,
-    },
-  });
-
-  await prisma.userStoryTag.createMany({
-    data: [
-      { storyId: story6.id, value: 'catálogo' },
-      { storyId: story6.id, value: 'productos' },
-      { storyId: story6.id, value: 'frontend' },
-    ],
-  });
-
-  const story7 = await prisma.userStory.create({
-    data: {
-      projectId: project2.id,
-      code: 'US-002',
-      title: 'Carrito de compras',
-      asA: 'Cliente',
-      iWant: 'Agregar productos a un carrito de compras',
-      soThat: 'Pueda gestionar mi orden antes de finalizar la compra',
-      acceptanceCriteria: [
-        'Agregar/quitar productos del carrito',
-        'Modificar cantidades',
-        'Ver subtotal y total',
-        'Aplicar códigos de descuento',
-        'Persistir carrito en sesión',
-      ].join('\n'),
-      description: 'Gestión completa del carrito de compras',
-      priority: 2,
-      businessValue: 95,
-      orderRank: 2,
-      estimateHours: 16,
-      status: StoryStatus.BACKLOG,
-    },
-  });
-
-  await prisma.userStoryTag.createMany({
-    data: [
-      { storyId: story7.id, value: 'carrito' },
-      { storyId: story7.id, value: 'compras' },
-      { storyId: story7.id, value: 'fullstack' },
-    ],
-  });
-
-  console.log('  ✅ 2 historias creadas para', project2.name);
-
-  // ============================================================
-  // 4. CREAR TAREAS PARA LAS HISTORIAS
-  // ============================================================
-  console.log('\n📋 Creando tareas para las historias de usuario...');
-
-  // Tareas para Story 1 (Login) - COMPLETADAS
-  await prisma.task.createMany({
-    data: [
-      {
-        storyId: story1.id,
-        code: 'T-US-001-1',
-        title: 'Implementar endpoint de login',
-        description: 'Crear endpoint POST /auth/login que reciba email y password',
-        effort: 3,
-        status: 'DONE',
-        assignedToId: developer1.id,
-        completedAt: new Date('2025-01-20T10:00:00'),
-        startedAt: new Date('2025-01-18T09:00:00'),
+    const project = await prisma.project.create({
+      data: {
+        code: tmpl.code,
+        name: tmpl.name,
+        description: tmpl.description,
+        visibility: tmpl.visibility,
+        productObjective: tmpl.productObjective,
+        definitionOfDone:
+          'Tests pasando, código revisado, documentación mínima actualizada.',
+        sprintDuration: tmpl.sprintDuration,
+        qualityCriteria:
+          'Cobertura de tests > 70%, revisión de código obligatoria, SonarQube sin issues críticos.',
+        status: ProjectStatus.ACTIVE,
+        startDate: projectStart,
+        endDate: addDays(
+          projectStart,
+          tmpl.sprintDuration * SEED_CONFIG.SPRINTS_PER_PROJECT,
+        ),
+        ownerId: admin.id,
       },
-      {
-        storyId: story1.id,
-        code: 'T-US-001-2',
-        title: 'Validación de credenciales',
-        description: 'Implementar lógica de validación con bcrypt',
-        effort: 2,
-        status: 'DONE',
-        assignedToId: developer1.id,
-        completedAt: new Date('2025-01-20T15:00:00'),
-        startedAt: new Date('2025-01-20T11:00:00'),
-      },
-      {
-        storyId: story1.id,
-        code: 'T-US-001-3',
-        title: 'Generación de token JWT',
-        description: 'Configurar passport-jwt y generar tokens con expiración',
-        effort: 2,
-        status: 'DONE',
-        assignedToId: developer2.id,
-        completedAt: new Date('2025-01-21T12:00:00'),
-        startedAt: new Date('2025-01-21T09:00:00'),
-      },
-      {
-        storyId: story1.id,
-        code: 'T-US-001-4',
-        title: 'Tests unitarios de autenticación',
-        description: 'Escribir tests para validación y generación de tokens',
-        effort: 1,
-        status: 'DONE',
-        assignedToId: developer2.id,
-        completedAt: new Date('2025-01-21T16:00:00'),
-        startedAt: new Date('2025-01-21T14:00:00'),
-      },
-    ],
-  });
+    });
 
-  // Tareas para Story 2 (Crear proyecto) - COMPLETADAS
-  await prisma.task.createMany({
-    data: [
-      {
-        storyId: story2.id,
-        code: 'T-US-002-1',
-        title: 'Diseñar schema de proyectos',
-        description: 'Crear modelos Project, ProjectMember en Prisma',
-        effort: 2,
-        status: 'DONE',
-        assignedToId: developer1.id,
-        completedAt: new Date('2025-01-22T11:00:00'),
-        startedAt: new Date('2025-01-22T09:00:00'),
-      },
-      {
-        storyId: story2.id,
-        code: 'T-US-002-2',
-        title: 'Endpoint de creación de proyecto',
-        description: 'POST /projects con validación de datos',
-        effort: 4,
-        status: 'DONE',
-        assignedToId: developer1.id,
-        completedAt: new Date('2025-01-23T16:00:00'),
-        startedAt: new Date('2025-01-23T09:00:00'),
-      },
-      {
-        storyId: story2.id,
-        code: 'T-US-002-3',
-        title: 'Asignación de miembros al equipo',
-        description: 'Lógica para agregar miembros con roles y validaciones',
-        effort: 5,
-        status: 'DONE',
-        assignedToId: developer3.id,
-        completedAt: new Date('2025-01-24T17:00:00'),
-        startedAt: new Date('2025-01-24T09:00:00'),
-      },
-      {
-        storyId: story2.id,
-        code: 'T-US-002-4',
-        title: 'Generación automática de código de proyecto',
-        description: 'Algoritmo para generar códigos únicos tipo SGA-2025',
-        effort: 3,
-        status: 'DONE',
-        assignedToId: developer2.id,
-        completedAt: new Date('2025-01-25T14:00:00'),
-        startedAt: new Date('2025-01-25T10:00:00'),
-      },
-      {
-        storyId: story2.id,
-        code: 'T-US-002-5',
-        title: 'Validaciones de roles',
-        description: 'Validar que solo haya 1 PO y máximo 1 SM',
-        effort: 2,
-        status: 'DONE',
-        assignedToId: developer2.id,
-        completedAt: new Date('2025-01-25T17:00:00'),
-        startedAt: new Date('2025-01-25T15:00:00'),
-      },
-    ],
-  });
+    console.log(`📁 Proyecto creado: ${project.name}`);
 
-  // Tareas para Story 3 (Gestión de historias) - EN PROGRESO
-  await prisma.task.createMany({
-    data: [
-      {
-        storyId: story3.id,
-        code: 'T-US-003-1',
-        title: 'Modelo de datos para historias',
-        description: 'Crear schema UserStory con todos los campos requeridos',
-        effort: 2,
-        status: 'DONE',
-        assignedToId: developer1.id,
-        completedAt: new Date('2025-01-26T12:00:00'),
-        startedAt: new Date('2025-01-26T09:00:00'),
-      },
-      {
-        storyId: story3.id,
-        code: 'T-US-003-2',
-        title: 'CRUD de historias de usuario',
-        description: 'Endpoints para crear, listar, actualizar y eliminar historias',
-        effort: 6,
-        status: 'DONE',
-        assignedToId: developer3.id,
-        completedAt: new Date('2025-01-27T18:00:00'),
-        startedAt: new Date('2025-01-27T09:00:00'),
-      },
-      {
-        storyId: story3.id,
-        code: 'T-US-003-3',
-        title: 'Sistema de tags para categorización',
-        description: 'Modelo UserStoryTag y endpoints para gestionar tags',
-        effort: 3,
-        status: 'IN_PROGRESS',
-        assignedToId: developer2.id,
-        startedAt: new Date('2025-01-28T09:00:00'),
-      },
-      {
-        storyId: story3.id,
-        code: 'T-US-003-4',
-        title: 'Reordenamiento de historias',
-        description: 'Endpoint para actualizar orderRank con drag & drop',
-        effort: 4,
-        status: 'TODO',
-        assignedToId: developer2.id,
-      },
-      {
-        storyId: story3.id,
-        code: 'T-US-003-5',
-        title: 'Validaciones de prioridad y negocio',
-        description: 'DTOs con class-validator para campos numéricos',
-        effort: 2,
-        status: 'TODO',
-      },
-      {
-        storyId: story3.id,
-        code: 'T-US-003-6',
-        title: 'Tests E2E del CRUD',
-        description: 'Suite completa de tests para todas las operaciones',
-        effort: 3,
-        status: 'TODO',
-      },
-    ],
-  });
+    // Configuración del proyecto
+    await prisma.projectConfig.createMany({
+      data: [
+        {
+          projectId: project.id,
+          key: 'planningPoker.method',
+          value: 'FIBONACCI',
+          type: 'string',
+          category: 'estimation',
+          description: 'Método de estimación por defecto.',
+        },
+        {
+          projectId: project.id,
+          key: 'sprint.duration',
+          value: tmpl.sprintDuration.toString(),
+          type: 'int',
+          category: 'sprint',
+          description: 'Duración estándar de los sprints en días.',
+        },
+        {
+          projectId: project.id,
+          key: 'quality.minCoverage',
+          value: '70',
+          type: 'int',
+          category: 'quality',
+          description: 'Cobertura mínima de tests.',
+        },
+      ],
+    });
 
-  // Tareas para Story 4 (Planning Poker) - PENDIENTES
-  await prisma.task.createMany({
-    data: [
-      {
-        storyId: story4.id,
-        code: 'T-US-004-1',
-        title: 'Modelo de sesiones de estimación',
-        description: 'Schema para EstimationSession y EstimationVote',
-        effort: 3,
-        status: 'TODO',
-      },
-      {
-        storyId: story4.id,
-        code: 'T-US-004-2',
-        title: 'Crear y configurar sesión',
-        description: 'Endpoint para crear sesión con método de estimación',
-        effort: 4,
-        status: 'TODO',
-      },
-      {
-        storyId: story4.id,
-        code: 'T-US-004-3',
-        title: 'Sistema de votación anónima',
-        description: 'Endpoint para votar y almacenar votos ocultos',
-        effort: 5,
-        status: 'TODO',
-      },
-      {
-        storyId: story4.id,
-        code: 'T-US-004-4',
-        title: 'Revelación de votos',
-        description: 'Lógica para revelar todos los votos simultáneamente',
-        effort: 3,
-        status: 'TODO',
-      },
-      {
-        storyId: story4.id,
-        code: 'T-US-004-5',
-        title: 'Múltiples rondas de votación',
-        description: 'Permitir reiniciar votación si no hay consenso',
-        effort: 4,
-        status: 'TODO',
-      },
-      {
-        storyId: story4.id,
-        code: 'T-US-004-6',
-        title: 'Finalizar sesión y guardar estimación',
-        description: 'Guardar estimación final en la historia',
-        effort: 2,
-        status: 'TODO',
-      },
-      {
-        storyId: story4.id,
-        code: 'T-US-004-7',
-        title: 'Historial de sesiones',
-        description: 'Endpoint para ver sesiones pasadas con votos',
-        effort: 3,
-        status: 'TODO',
-      },
-    ],
-  });
+    // Miembros del proyecto: PO, SM y 3 devs
+    const memberUsers: User[] = [po, sm, dev1, dev2, dev3];
+    for (const [idx, user] of memberUsers.entries()) {
+      let role: ProjectMemberRole;
+      if (idx === 0) role = ProjectMemberRole.PRODUCT_OWNER;
+      else if (idx === 1) role = ProjectMemberRole.SCRUM_MASTER;
+      else role = ProjectMemberRole.DEVELOPER;
 
-  // Tareas para Story 5 (Dashboard) - PENDIENTES
-  await prisma.task.createMany({
-    data: [
-      {
-        storyId: story5.id,
-        code: 'T-US-005-1',
-        title: 'Endpoint de métricas del proyecto',
-        description: 'API que devuelva métricas agregadas del proyecto',
-        effort: 5,
-        status: 'TODO',
+      await prisma.projectMember.create({
+        data: {
+          projectId: project.id,
+          userId: user.id,
+          role,
+        },
+      });
+    }
+
+    // Repositorio principal
+    const repo = await prisma.repository.create({
+      data: {
+        projectId: project.id,
+        name: `${project.code.toLowerCase()}-repo`,
+        url: `https://github.com/example/${project.code.toLowerCase()}`,
+        mainBranch: 'main',
+        isPrimary: true,
+        syncEnabled: true,
       },
-      {
-        storyId: story5.id,
-        code: 'T-US-005-2',
-        title: 'Cálculo de velocidad del equipo',
-        description: 'Obtener velocidad promedio de últimos 3 sprints',
-        effort: 4,
-        status: 'TODO',
-      },
-      {
-        storyId: story5.id,
-        code: 'T-US-005-3',
-        title: 'Componente de Burndown Chart',
-        description: 'Gráfico interactivo con Recharts',
-        effort: 6,
-        status: 'TODO',
-      },
-      {
-        storyId: story5.id,
-        code: 'T-US-005-4',
-        title: 'Tarjetas de indicadores',
-        description: 'Cards con métricas clave (historias, velocidad, etc)',
-        effort: 4,
-        status: 'TODO',
-      },
-      {
-        storyId: story5.id,
-        code: 'T-US-005-5',
-        title: 'Gráfico de distribución de trabajo',
-        description: 'Chart mostrando asignación por desarrollador',
-        effort: 5,
-        status: 'TODO',
-      },
-      {
-        storyId: story5.id,
-        code: 'T-US-005-6',
-        title: 'Actualización en tiempo real',
-        description: 'Polling o WebSockets para actualizar métricas',
-        effort: 6,
-        status: 'TODO',
-      },
-    ],
-  });
+    });
 
-  // Tareas para Story 6 (Catálogo de productos) - E-Commerce
-  await prisma.task.createMany({
-    data: [
-      {
-        storyId: story6.id,
-        code: 'T-US-001-1',
-        title: 'Modelo de productos',
-        description: 'Schema de Product con categorías',
-        effort: 2,
-        status: 'TODO',
-      },
-      {
-        storyId: story6.id,
-        code: 'T-US-001-2',
-        title: 'Listado de productos con paginación',
-        description: 'Endpoint GET /products con filtros y paginación',
-        effort: 4,
-        status: 'TODO',
-      },
-      {
-        storyId: story6.id,
-        code: 'T-US-001-3',
-        title: 'Filtros por categoría',
-        description: 'Implementar filtrado por categorías múltiples',
-        effort: 3,
-        status: 'TODO',
-      },
-      {
-        storyId: story6.id,
-        code: 'T-US-001-4',
-        title: 'Búsqueda full-text',
-        description: 'Búsqueda por nombre y descripción de productos',
-        effort: 3,
-        status: 'TODO',
-      },
-    ],
-  });
+    // -------------------------------------------------------------------------
+    // 4. Sprints, historias, tareas, eventos Scrum, métricas y ML
+    // -------------------------------------------------------------------------
+    const sprints: Sprint[] = [];
 
-  // Tareas para Story 7 (Carrito de compras)
-  await prisma.task.createMany({
-    data: [
-      {
-        storyId: story7.id,
-        code: 'T-US-002-1',
-        title: 'Modelo de carrito',
-        description: 'Schema Cart y CartItem',
-        effort: 2,
-        status: 'TODO',
-      },
-      {
-        storyId: story7.id,
-        code: 'T-US-002-2',
-        title: 'Agregar/quitar productos del carrito',
-        description: 'Endpoints para gestionar items del carrito',
-        effort: 4,
-        status: 'TODO',
-      },
-      {
-        storyId: story7.id,
-        code: 'T-US-002-3',
-        title: 'Cálculo de totales',
-        description: 'Lógica para calcular subtotales, impuestos y total',
-        effort: 3,
-        status: 'TODO',
-      },
-      {
-        storyId: story7.id,
-        code: 'T-US-002-4',
-        title: 'Sistema de descuentos',
-        description: 'Validación y aplicación de códigos promocionales',
-        effort: 5,
-        status: 'TODO',
-      },
-      {
-        storyId: story7.id,
-        code: 'T-US-002-5',
-        title: 'Persistencia del carrito',
-        description: 'Guardar carrito en sesión/base de datos',
-        effort: 2,
-        status: 'TODO',
-      },
-    ],
-  });
+    for (let s = 1; s <= SEED_CONFIG.SPRINTS_PER_PROJECT; s++) {
+      const sprintStart = addDays(projectStart, (s - 1) * tmpl.sprintDuration);
+      const sprintEnd = addDays(sprintStart, tmpl.sprintDuration - 1);
 
-  console.log('  ✅ Tareas creadas:');
-  console.log('     - Story 1: 4 tareas (TODAS COMPLETADAS)');
-  console.log('     - Story 2: 5 tareas (TODAS COMPLETADAS)');
-  console.log('     - Story 3: 6 tareas (2 completadas, 1 en progreso, 3 pendientes)');
-  console.log('     - Story 4: 7 tareas (TODAS PENDIENTES)');
-  console.log('     - Story 5: 6 tareas (TODAS PENDIENTES)');
-  console.log('     - Story 6: 4 tareas (TODAS PENDIENTES)');
-  console.log('     - Story 7: 5 tareas (TODAS PENDIENTES)');
-  console.log('     TOTAL: 37 tareas');
+      let status: SprintStatus;
+      if (s === SEED_CONFIG.SPRINTS_PER_PROJECT) status = SprintStatus.PLANNED;
+      else if (s === SEED_CONFIG.SPRINTS_PER_PROJECT - 1)
+        status = SprintStatus.IN_PROGRESS;
+      else status = SprintStatus.COMPLETED;
 
-  // ============================================================
-  // RESUMEN FINAL
-  // ============================================================
-  console.log('\n✨ ¡Seed completado exitosamente!\n');
-  console.log('═══════════════════════════════════════════════════════════');
-  console.log('📋 CREDENCIALES DE ACCESO PARA DESARROLLO');
-  console.log('═══════════════════════════════════════════════════════════\n');
+      const plannedVelocity = 40 + s * 5;
+      let actualVelocity: number | null = null;
 
-  console.log('👑 ADMINISTRADOR:');
-  console.log('   Email:    admin@proyecto.com');
-  console.log('   Password: Admin123456');
-  console.log('   Rol:      Admin del sistema\n');
+      if (status === SprintStatus.COMPLETED) {
+        const performanceFactor = Math.random();
+        if (performanceFactor > 0.6) {
+          // sobrecumple
+          actualVelocity = plannedVelocity + Math.floor(Math.random() * 5);
+        } else {
+          // no cumple
+          actualVelocity =
+            plannedVelocity - (1 + Math.floor(Math.random() * 5));
+        }
+      }
 
-  console.log('📦 PRODUCT OWNER:');
-  console.log('   Email:    po@proyecto.com');
-  console.log('   Password: ProductOwner123');
-  console.log('   Rol:      Owner de 2 proyectos\n');
+      const sprint = await prisma.sprint.create({
+        data: {
+          projectId: project.id,
+          number: s,
+          name: `Sprint ${s}`,
+          goal:
+            s === 1
+              ? 'Base de autenticación y proyectos.'
+              : s === 2
+                ? 'Historias y tareas principales.'
+                : s === 3
+                  ? 'Integraciones GitHub y métricas.'
+                  : 'Optimización y ML.',
+          startDate: sprintStart,
+          endDate: sprintEnd,
+          duration: tmpl.sprintDuration,
+          status,
+          capacity: 120,
+          plannedVelocity,
+          actualVelocity,
+        },
+      });
 
-  console.log('🎯 SCRUM MASTER:');
-  console.log('   Email:    sm@proyecto.com');
-  console.log('   Password: ScrumMaster123');
-  console.log('   Rol:      Scrum Master del Proyecto 1\n');
+      sprints.push(sprint);
 
-  console.log('💻 DESARROLLADORES:');
-  console.log('   Email:    dev1@proyecto.com');
-  console.log('   Password: Developer123');
-  console.log('   Rol:      Developer en ambos proyectos\n');
+      // Sprint Review y Retrospective para sprints completados / en progreso
+      if (
+        sprint.status === SprintStatus.COMPLETED ||
+        sprint.status === SprintStatus.IN_PROGRESS
+      ) {
+        await prisma.sprintReview.create({
+          data: {
+            sprintId: sprint.id,
+            date: addDays(sprintEnd, 1),
+            participants: `${po.firstName} ${po.lastName}, ${sm.firstName} ${sm.lastName}, equipo de desarrollo`,
+            summary: `Revisión del sprint ${s} del proyecto ${project.name}`,
+            feedbackGeneral:
+              s === 1
+                ? 'Buenas bases técnicas, pero falta mejorar las estimaciones.'
+                : 'Equipo estable, se cumplieron la mayoría de los objetivos.',
+            createdById: po.id,
+          },
+        });
 
-  console.log('   Email:    dev2@proyecto.com');
-  console.log('   Password: Developer123');
-  console.log('   Rol:      Developer en Proyecto 1\n');
+        await prisma.sprintRetrospective.create({
+          data: {
+            sprintId: sprint.id,
+            whatWentWell:
+              'Colaboración diaria, comunicación clara y objetivos visibles.',
+            whatToImprove:
+              'Reducir trabajo en progreso y mejorar refinamiento del backlog.',
+            whatToStopDoing:
+              'Dejar de iniciar tareas grandes sin dividirlas en subtareas.',
+            createdById: sm.id,
+            improvementActions: {
+              create: [
+                {
+                  description:
+                    'Limitar WIP a 2 tareas simultáneas por desarrollador.',
+                  responsible: `${sm.firstName} ${sm.lastName}`,
+                  dueDate: addDays(sprintEnd, 7),
+                  status: ImprovementActionStatus.IN_PROGRESS,
+                },
+                {
+                  description: 'Agendar refinamiento de backlog semanal.',
+                  responsible: `${po.firstName} ${po.lastName}`,
+                  dueDate: addDays(sprintEnd, 3),
+                  status: ImprovementActionStatus.PENDING,
+                },
+              ],
+            },
+          },
+        });
 
-  console.log('   Email:    dev3@proyecto.com');
-  console.log('   Password: Developer123');
-  console.log('   Rol:      Developer en Proyecto 1\n');
+        // PSP metrics por desarrollador (para features históricas)
+        for (const dev of [dev1, dev2, dev3]) {
+          const tasksCompleted = 5 + s + Math.floor(Math.random() * 4);
+          const totalEffortHours = 20 + s * 5 + Math.floor(Math.random() * 6);
 
-  console.log('👤 USUARIO REGULAR:');
-  console.log('   Email:    user@proyecto.com');
-  console.log('   Password: User123456');
-  console.log('   Rol:      Sin proyectos asignados\n');
+          await prisma.developerPSPMetrics.create({
+            data: {
+              sprintId: sprint.id,
+              userId: dev.id,
+              tasksCompleted,
+              tasksReopened: s - 1,
+              defectsFixed: 2 + s,
+              totalEffortHours,
+              avgTimePerTask: totalEffortHours / tasksCompleted,
+            },
+          });
+        }
 
-  console.log('═══════════════════════════════════════════════════════════');
-  console.log('📊 DATOS CREADOS');
-  console.log('═══════════════════════════════════════════════════════════\n');
+        // ------------------- Riesgo de sprint (para ML de riesgo) -------------
+        const committedEffort = 30 + s * 5 + i * 2;
+        const teamCapacity = 45 + (i % 3) * 3;
+        const historicalVelocity = 28 + (s - 1) * 4;
 
-  console.log('✅ 7 Usuarios (1 admin + 6 regulares)');
-  console.log('✅ 2 Proyectos');
-  console.log('✅ 7 Miembros de equipo asignados');
-  console.log('✅ 7 Historias de usuario (5 en Proyecto 1, 2 en Proyecto 2)');
-  console.log('✅ 18 Tags en historias');
-  console.log('✅ 37 Tareas asignadas a las historias\n');
+        const missedStories =
+          sprint.status === SprintStatus.COMPLETED
+            ? Math.max(0, Math.floor(s / 3) - 1)
+            : Math.floor(s / 2);
 
-  console.log('═══════════════════════════════════════════════════════════');
-  console.log('🚀 PRÓXIMOS PASOS');
-  console.log('═══════════════════════════════════════════════════════════\n');
+        const teamChanges = i >= 2 && s > 3 ? 1 : 0;
+        const bugsOpen = 4 + s + i;
 
-  console.log('1. Inicia el backend:');
-  console.log('   npm run start:dev\n');
+        const loadRatio = committedEffort / teamCapacity;
 
-  console.log('2. Abre Prisma Studio para ver los datos:');
-  console.log('   npx prisma studio\n');
+        let riskLevel: RiskLevel;
+        if (loadRatio < 0.8 && missedStories === 0 && bugsOpen < 10) {
+          riskLevel = RiskLevel.LOW;
+        } else if (loadRatio < 1.1 && bugsOpen < 15) {
+          riskLevel = RiskLevel.MEDIUM;
+        } else {
+          riskLevel = RiskLevel.HIGH;
+        }
 
-  console.log('3. Usa las credenciales de arriba para hacer login desde el frontend\n');
+        const confidenceScore =
+          riskLevel === RiskLevel.HIGH
+            ? 0.82
+            : riskLevel === RiskLevel.MEDIUM
+              ? 0.71
+              : 0.6;
 
-  console.log('4. API disponible en:');
-  console.log('   http://localhost:3000/api\n');
+        await prisma.mLSprintRiskPrediction.create({
+          data: {
+            sprintId: sprint.id,
+            riskLevel,
+            confidenceScore,
+            factors: {
+              missedStories,
+              teamChanges,
+              bugsOpen,
+              loadRatio,
+            },
+            committedEffort,
+            teamCapacity,
+            historicalVelocity,
+          },
+        });
+      }
 
-  console.log('═══════════════════════════════════════════════════════════\n');
+      // -----------------------------------------------------------------------
+      // Historias de usuario para el sprint (alimentan ML ASSIGNMENT/VELOCITY)
+      // -----------------------------------------------------------------------
+      const storiesForSprint: UserStory[] = [];
+
+      for (let j = 1; j <= SEED_CONFIG.STORIES_PER_SPRINT; j++) {
+        const storyStatus: StoryStatus =
+          j <= Math.floor(SEED_CONFIG.STORIES_PER_SPRINT / 2)
+            ? StoryStatus.DONE
+            : j <= SEED_CONFIG.STORIES_PER_SPRINT - 1
+              ? StoryStatus.IN_PROGRESS
+              : StoryStatus.BACKLOG;
+
+        const story = await prisma.userStory.create({
+          data: {
+            projectId: project.id,
+            sprintId: storyStatus === StoryStatus.BACKLOG ? null : sprint.id,
+            code: `${project.code}-US-${globalStoryCounter}`,
+            title: `Historia ${globalStoryCounter} del proyecto ${project.code}`,
+            asA: j % 2 === 0 ? 'Docente' : 'Estudiante',
+            iWant: 'Gestionar tareas del sprint de forma eficiente',
+            soThat: 'el equipo pueda entregar valor continuo a los usuarios',
+            acceptanceCriteria:
+              '- Todas las tareas tienen responsable\n- Las pruebas pasan en CI\n- Código revisado en PR',
+            description: 'Historia generada para datos de entrenamiento ML.',
+            priority: j,
+            businessValue: 100 - j * 5,
+            orderRank: globalStoryCounter,
+            estimateHours: 8 + j,
+            label: j % 3,
+            status: storyStatus,
+          },
+        });
+
+        storiesForSprint.push(story);
+
+        await prisma.userStoryTag.createMany({
+          data: [
+            {
+              storyId: story.id,
+              value: 'backend',
+            },
+            {
+              storyId: story.id,
+              value: j % 2 === 0 ? 'bugfix' : 'feature',
+            },
+          ],
+          skipDuplicates: true,
+        });
+
+        // Sesión de estimación y votos (Planning Poker)
+        const estimationSession = await prisma.estimationSession.create({
+          data: {
+            projectId: project.id,
+            name: `Estimación ${story.code}`,
+            status: SessionStatus.CLOSED,
+            finalEstimation: `${story.estimateHours}`,
+            method: EstimationMethod.FIBONACCI,
+            sequence: { values: [1, 2, 3, 5, 8, 13] },
+            currentRound: 2,
+            startedAt: addDays(sprintStart, -1),
+            completedAt: sprintStart,
+            storyId: story.id,
+            moderatorId: sm.id,
+            isRevealed: true,
+          },
+        });
+
+        for (const [idx, voter] of [dev1, dev2, dev3].entries()) {
+          await prisma.estimationVote.create({
+            data: {
+              sessionId: estimationSession.id,
+              userId: voter.id,
+              voteValue: `${story.estimateHours + (idx - 1)}`,
+              roundNumber: 1,
+              justification: 'Basado en complejidad percibida y dependencias.',
+            },
+          });
+        }
+
+        // ---------------------------------------------------------------------
+        // Tareas para la historia (alimentan ML ASSIGNMENT/COMPLETION)
+        // ---------------------------------------------------------------------
+        const tasksForStory: Task[] = [];
+
+        for (let k = 1; k <= SEED_CONFIG.TASKS_PER_STORY; k++) {
+          const statusMap = [
+            TaskStatus.TODO,
+            TaskStatus.IN_PROGRESS,
+            TaskStatus.TESTING,
+            TaskStatus.DONE,
+            TaskStatus.CANCELLED,
+          ];
+          const taskStatus = statusMap[(k + j + s) % statusMap.length];
+          const assignee = [dev1, dev2, dev3][(k + j) % 3];
+          const isDone = taskStatus === TaskStatus.DONE;
+
+          const startedAt = addDays(sprintStart, k);
+          const completedAt = isDone ? addDays(startedAt, 1) : null;
+
+          const task = await prisma.task.create({
+            data: {
+              storyId: story.id,
+              code: `${project.code}-T-${globalTaskCounter}`,
+              title: `Tarea ${globalTaskCounter} para ${story.code}`,
+              description: 'Trabajo detallado asociado a la historia.',
+              effort: 2 + (k % 3),
+              status: taskStatus,
+              assignedToId: assignee.id,
+              isBug: k === SEED_CONFIG.TASKS_PER_STORY, // última tarea como bug
+              reopenCount: taskStatus === TaskStatus.CANCELLED ? 1 : 0,
+              startedAt,
+              completedAt,
+            },
+          });
+
+          tasksForStory.push(task);
+
+          await prisma.taskActivityLog.create({
+            data: {
+              taskId: task.id,
+              userId: assignee.id,
+              action: 'STATUS_CHANGE',
+              fromStatus: TaskStatus.TODO,
+              toStatus: taskStatus,
+              description: `Cambio de estado a ${taskStatus}`,
+            },
+          });
+
+          // Commits / PRs sólo para tareas hechas (para features “históricas”)
+          if (isDone) {
+            await prisma.gitHubCommit.create({
+              data: {
+                repositoryId: repo.id,
+                sha: `sha-${project.code}-${globalStoryCounter}-${globalTaskCounter}`,
+                shortSha: `short-${globalTaskCounter}`,
+                message: `Implementa ${task.title}`,
+                author: `${assignee.firstName} ${assignee.lastName}`,
+                authorEmail: assignee.email,
+                committedAt: completedAt ?? startedAt,
+                branch: 'main',
+                url: `https://github.com/example/${project.code.toLowerCase()}/commit/sha-${globalTaskCounter}`,
+                linkedStoryId: story.id,
+                linkedTaskId: task.id,
+              },
+            });
+
+            await prisma.gitHubPullRequest.create({
+              data: {
+                repositoryId: repo.id,
+                number: globalTaskCounter,
+                title: `PR para ${task.title}`,
+                state: 'merged',
+                author: `${assignee.firstName} ${assignee.lastName}`,
+                sourceBranch: `feature/${task.code.toLowerCase()}`,
+                targetBranch: 'main',
+                url: `https://github.com/example/${project.code.toLowerCase()}/pull/${globalTaskCounter}`,
+                createdAtGitHub: startedAt,
+                closedAtGitHub: completedAt,
+                linkedStoryId: story.id,
+                linkedTaskId: task.id,
+              },
+            });
+
+            await prisma.gitHubSyncLog.create({
+              data: {
+                repositoryId: repo.id,
+                userId: admin.id,
+                status: GitHubSyncStatus.SUCCESS,
+                commitsFound: 1,
+                prsFound: 1,
+                errorMessage: null,
+              },
+            });
+          }
+
+          // -----------------------------------------------------------------
+          // HU15: Sugerencias ML de asignación (no asignan automáticamente)
+          //  - Aquí diseñamos la relación entre features y etiqueta
+          // -----------------------------------------------------------------
+
+          // "Historial" del dev (coherente con el sprint)
+          const developerPastTasksCompleted =
+            5 +
+            s * 2 +
+            (assignee.id === dev1.id ? 3 : assignee.id === dev2.id ? 1 : 0);
+          const developerPastDefectsFixed =
+            2 + s + (assignee.id === dev2.id ? 2 : 0);
+
+          // Probabilidad base de que la asignación sea "buena"
+          let baseProb = 0.5;
+
+          // Historias muy prioritarias tienden a tener más foco
+          if (story.priority <= 3) {
+            baseProb += 0.15;
+          } else if (story.priority >= 10) {
+            baseProb -= 0.05;
+          }
+
+          // Tareas pequeñas suelen cerrarse mejor
+          if (task.effort <= 3) {
+            baseProb += 0.05;
+          } else {
+            baseProb -= 0.05;
+          }
+
+          // Historial del dev
+          if (developerPastTasksCompleted > 5 + 2 * s) {
+            baseProb += 0.1;
+          } else {
+            baseProb -= 0.05;
+          }
+
+          if (developerPastDefectsFixed > 3 + s / 2) {
+            baseProb += 0.05;
+          }
+
+          // Bugs son más delicados
+          if (task.isBug) {
+            baseProb -= 0.1;
+          }
+
+          // Ruido pequeño y recorte a [0.1, 0.9]
+          baseProb += (Math.random() - 0.5) * 0.1; // +/- 0.05
+          baseProb = Math.min(0.9, Math.max(0.1, baseProb));
+
+          const successProb = baseProb;
+          const acceptProb = Math.min(0.9, Math.max(0.05, baseProb - 0.05));
+
+          const assignmentSuccessful = Math.random() < successProb;
+          const suggestionAccepted = Math.random() < acceptProb;
+
+          await prisma.mLDeveloperAssignmentSuggestion.create({
+            data: {
+              storyId: story.id,
+              taskId: task.id,
+              suggestedUserId: assignee.id,
+              confidenceScore: baseProb,
+              reason:
+                'Histórico de tareas similares en este módulo y experiencia previa.',
+              wasAccepted: suggestionAccepted,
+              acceptedById: suggestionAccepted ? sm.id : null, // Scrum Master confirma
+            },
+          });
+
+          // MLTrainingData: ASSIGNMENT (para entrenar recomendador)
+          await prisma.mLTrainingData.create({
+            data: {
+              sprintId: sprint.id,
+              projectId: project.id,
+              developerId: assignee.id,
+              storyId: story.id,
+              taskId: task.id,
+              dataType: MLDataType.ASSIGNMENT,
+              features: {
+                storyPriority: story.priority,
+                storyBusinessValue: story.businessValue,
+                taskEffort: task.effort,
+                sprintNumber: sprint.number,
+                isBug: task.isBug,
+                developerPastTasksCompleted,
+                developerPastDefectsFixed,
+              },
+              outcome: {
+                assignedToSuggested: suggestionAccepted,
+                successfulAssignment: assignmentSuccessful,
+              },
+              wasSuccessful: assignmentSuccessful,
+            },
+          });
+
+          // MLTrainingData: COMPLETION para tareas DONE (tiempo de finalización)
+          if (isDone && completedAt) {
+            const completionTimeHours = 4 + (k % 4);
+
+            await prisma.mLTrainingData.create({
+              data: {
+                sprintId: sprint.id,
+                projectId: project.id,
+                developerId: assignee.id,
+                storyId: story.id,
+                taskId: task.id,
+                dataType: MLDataType.COMPLETION,
+                features: {
+                  taskEffort: task.effort,
+                  sprintNumber: sprint.number,
+                  reopenCount: task.reopenCount,
+                },
+                outcome: {
+                  completedInHours: completionTimeHours,
+                  completedInSprint: true,
+                },
+                wasSuccessful: true,
+                completionTime: completionTimeHours,
+              },
+            });
+          }
+
+          globalTaskCounter++;
+        } // fin loop tareas
+
+        // Daily Scrums (por sprint / dev / día) y link a historias
+        for (
+          let dayOffset = 0;
+          dayOffset < SEED_CONFIG.DAILY_SCRUM_DAYS;
+          dayOffset++
+        ) {
+          const date = addDays(sprintStart, dayOffset);
+
+          for (const user of [dev1, dev2, dev3]) {
+            const daily = await prisma.dailyScrum.upsert({
+              where: {
+                sprintId_userId_date: {
+                  sprintId: sprint.id,
+                  userId: user.id,
+                  date,
+                },
+              },
+              create: {
+                sprintId: sprint.id,
+                userId: user.id,
+                date,
+                whatDidYesterday: `Trabajé en tareas de ${story.code}.`,
+                whatWillDoToday:
+                  'Continuar tareas pendientes y escribir pruebas.',
+                impediments:
+                  dayOffset === 2 && user.id === dev2.id
+                    ? 'Bloqueado por duda funcional del PO.'
+                    : null,
+              },
+              update: {},
+            });
+
+            await prisma.dailyScrumStory.create({
+              data: {
+                dailyScrumId: daily.id,
+                storyId: story.id,
+              },
+            });
+          }
+        }
+
+        // MLTrainingData: VELOCITY a nivel de historia-sprint
+        await prisma.mLTrainingData.create({
+          data: {
+            sprintId: sprint.id,
+            projectId: project.id,
+            developerId: null,
+            storyId: story.id,
+            taskId: null,
+            dataType: MLDataType.VELOCITY,
+            features: {
+              sprintNumber: sprint.number,
+              tasksCount: tasksForStory.length,
+              doneTasks: tasksForStory.filter(
+                (t) => t.status === TaskStatus.DONE,
+              ).length,
+              estimateHours: story.estimateHours,
+            },
+            outcome: {
+              storyCompleted: story.status === StoryStatus.DONE,
+            },
+            wasSuccessful: story.status === StoryStatus.DONE,
+          },
+        });
+
+        globalStoryCounter++;
+      } // fin loop historias
+
+      // Burndown snapshots (diarios por sprint)
+      for (let d = 0; d < sprint.duration; d++) {
+        const date = addDays(sprintStart, d);
+        const totalStories = storiesForSprint.length;
+        const totalTasks = totalStories * SEED_CONFIG.TASKS_PER_STORY;
+
+        const completedTasks = Math.floor((d / sprint.duration) * totalTasks);
+        const committedEffort = totalTasks * 3;
+        const effortCompleted = Math.floor(
+          (d / sprint.duration) * committedEffort,
+        );
+        const effortRemaining = committedEffort - effortCompleted;
+
+        await prisma.burndownSnapshot.create({
+          data: {
+            sprintId: sprint.id,
+            date,
+            effortRemaining,
+            effortCompleted,
+            effortCommitted: committedEffort,
+            storiesCompleted: Math.floor((d / sprint.duration) * totalStories),
+            storiesTotal: totalStories,
+            tasksCompleted: completedTasks,
+            tasksTotal: totalTasks,
+          },
+        });
+      }
+
+      // Sugerencias de refactorización por sprint (para ruido “realista”)
+      await prisma.codeRefactoringSuggestion.createMany({
+        data: [
+          {
+            repositoryId: repo.id,
+            sprintId: sprint.id,
+            filePath: 'src/services/planningPoker.ts',
+            description: 'Extraer lógica de estimación a un patrón Strategy.',
+            severity: RefactoringSeverity.MEDIUM,
+            tool: 'SonarQube',
+            status: RefactoringStatus.PENDING,
+            lineNumber: 120,
+            category: 'Design',
+          },
+          {
+            repositoryId: repo.id,
+            sprintId: sprint.id,
+            filePath: 'src/controllers/taskController.ts',
+            description:
+              'Reducir complejidad ciclomática y duplicación de código.',
+            severity: RefactoringSeverity.HIGH,
+            tool: 'ESLint',
+            status: RefactoringStatus.RESOLVED,
+            resolvedById: dev2.id,
+            resolvedAt: addDays(sprintEnd, 1),
+            lineNumber: 80,
+            category: 'Complexity',
+          },
+        ],
+      });
+    } // fin loop sprints
+
+    // MLTrainingData de VELOCITY a nivel de sprint-proyecto (para riesgo/compromiso)
+    for (const sprint of sprints) {
+      await prisma.mLTrainingData.create({
+        data: {
+          sprintId: sprint.id,
+          projectId: project.id,
+          developerId: null,
+          storyId: null,
+          taskId: null,
+          dataType: MLDataType.VELOCITY,
+          features: {
+            sprintNumber: sprint.number,
+            plannedVelocity: sprint.plannedVelocity,
+            actualVelocity: sprint.actualVelocity,
+          },
+          outcome: {
+            metCommitment:
+              sprint.actualVelocity && sprint.plannedVelocity
+                ? sprint.actualVelocity >= sprint.plannedVelocity
+                : null,
+          },
+          wasSuccessful:
+            sprint.actualVelocity && sprint.plannedVelocity
+              ? sprint.actualVelocity >= sprint.plannedVelocity
+              : null,
+        },
+      });
+    }
+  } // fin loop proyectos
+
+  console.log('✅ Seed completado con éxito.');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Error durante el seed:', e);
+    console.error('❌ Error en seed:', e);
     process.exit(1);
   })
   .finally(async () => {
