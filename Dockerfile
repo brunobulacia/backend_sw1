@@ -39,7 +39,7 @@ COPY --from=builder /usr/src/app/node_modules/.prisma ./node_modules/.prisma
 RUN npx prisma generate
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
 # Set NODE_ENV to production
 ENV NODE_ENV=production

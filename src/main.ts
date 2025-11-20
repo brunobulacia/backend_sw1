@@ -27,7 +27,7 @@ async function bootstrap() {
       }),
     );
 
-    const port = process.env.PORT ?? 8000;
+    const port = process.env.PORT ?? 8080;
     console.log(`🚀 Server starting on port ${port}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV}`);
     console.log(`🔑 JWT_SECRET configured: ${!!process.env.JWT_SECRET}`);
