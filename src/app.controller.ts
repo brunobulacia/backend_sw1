@@ -7,7 +7,7 @@ export class AppController {
   @Public()
   getHealth(): { status: string; timestamp: string } {
     return {
-      status: 'OK',
+      status: 'OK Response from AppController',
       timestamp: new Date().toISOString(),
     };
   }
