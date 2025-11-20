@@ -2,14 +2,139 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRefactoringDto } from './dto/create-refactoring.dto';
 import { UpdateRefactoringDto } from './dto/update-refactoring.dto';
+import { RefactorCodeDto, RefactorCodeResponseDto } from './dto/refactor-code.dto';
 
 @Injectable()
 export class CodeRefactoringService {
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * Refactorizar código usando Claude API
+   */
+  async refactorCodeWithClaude(
+    dto: RefactorCodeDto,
+  ): Promise<RefactorCodeResponseDto> {
+    const apiKey = process.env.CLAUDE_API_KEY;
+
+    if (!apiKey) {
+      throw new BadRequestException('CLAUDE_API_KEY no configurada en el servidor');
+    }
+
+    const systemPrompt = `Eres un experto en refactorización de código. Tu tarea es analizar el código proporcionado y sugerir mejoras siguiendo las mejores prácticas de desarrollo.
+
+IMPORTANTE: Debes responder ÚNICAMENTE con un objeto JSON válido, sin bloques de código markdown y sin explicaciones adicionales.
+
+La estructura JSON debe ser exactamente:
+{
+  "refactoredCode": "código refactorizado aquí como string",
+  "suggestions": "lista de sugerencias y mejoras aplicadas en formato markdown"
+}
+
+Considera:
+- Mejores prácticas de clean code
+- Optimizaciones de rendimiento
+- Patrones de diseño aplicables
+- Legibilidad y mantenibilidad
+- Eliminación de código duplicado
+- Nomenclatura consistente
+- Manejo de errores apropiado
+${dto.language ? `\n- El código está en ${dto.language}` : ''}
+${dto.instructions ? `\n- Instrucciones adicionales: ${dto.instructions}` : ''}
+
+CRÍTICO:
+1. Mantén la funcionalidad original del código. Solo mejora la estructura, legibilidad y eficiencia.
+2. El código refactorizado debe estar dentro del campo "refactoredCode" como un string (usa saltos de línea con \\n).
+3. NO uses bloques de código markdown en tu respuesta.
+4. Responde SOLO con el objeto JSON, nada más.`;
+
+    const userPrompt = `Aquí está el código a refactorizar:\n\n${dto.code}`;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-haiku-20241022',
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: userPrompt,
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Claude API error:', errorData);
+        throw new BadRequestException(
+          `Error de Claude API: ${errorData.error?.message || 'Error desconocido'}`,
+        );
+      }
+
+      const data = await response.json();
+      const contentText = data.content[0].text;
+
+      // Intentar parsear la respuesta JSON
+      let parsedResponse;
+      try {
+        // Limpiar la respuesta removiendo bloques de código markdown
+        let cleanedText = contentText;
+
+        // Remover bloques de código markdown del JSON
+        cleanedText = cleanedText.replace(/```[\w]*\n/g, '');
+        cleanedText = cleanedText.replace(/```/g, '');
+
+        // Buscar JSON en la respuesta limpia
+        const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResponse = JSON.parse(jsonMatch[0]);
+        } else {
+          // Si no hay JSON, intentar extraer código y sugerencias manualmente
+          parsedResponse = {
+            refactoredCode: contentText,
+            suggestions: 'Ver el código refactorizado para los cambios aplicados.',
+          };
+        }
+      } catch (parseError) {
+        console.error('Error parsing Claude response:', parseError);
+        console.error('Raw response:', contentText);
+
+        // Intentar extraer el código de bloques markdown como fallback
+        const codeBlockMatch = contentText.match(/```[\w]*\n([\s\S]*?)```/);
+        parsedResponse = {
+          refactoredCode: codeBlockMatch ? codeBlockMatch[1].trim() : contentText,
+          suggestions: 'Ver el código refactorizado para los cambios aplicados.',
+        };
+      }
+
+      return {
+        originalCode: dto.code,
+        refactoredCode: parsedResponse.refactoredCode || contentText,
+        suggestions: parsedResponse.suggestions || 'Código refactorizado exitosamente.',
+        language: dto.language,
+      };
+    } catch (error) {
+      console.error('Error calling Claude API:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        'Error al comunicarse con Claude API. Intenta nuevamente.',
+      );
+    }
+  }
 
   /**
    * Verificar acceso al repositorio

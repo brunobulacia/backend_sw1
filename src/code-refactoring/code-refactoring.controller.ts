@@ -11,6 +11,7 @@ import {
 import { CodeRefactoringService } from './code-refactoring.service';
 import { CreateRefactoringDto } from './dto/create-refactoring.dto';
 import { UpdateRefactoringDto } from './dto/update-refactoring.dto';
+import { RefactorCodeDto } from './dto/refactor-code.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller()
@@ -19,6 +20,15 @@ export class CodeRefactoringController {
   constructor(
     private readonly codeRefactoringService: CodeRefactoringService,
   ) {}
+
+  /**
+   * POST /api/refactor-code
+   * Refactorizar código usando Claude API
+   */
+  @Post('refactor-code')
+  async refactorCode(@Body() refactorDto: RefactorCodeDto) {
+    return this.codeRefactoringService.refactorCodeWithClaude(refactorDto);
+  }
 
   /**
    * POST /api/repositories/:repositoryId/refactoring/import
