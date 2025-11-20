@@ -17,7 +17,6 @@ RISK_FEATURE_KEYS = [
     "missedStories",
     "teamChanges",
     "bugsOpen",
-    "loadRatio",
 ]
 
 

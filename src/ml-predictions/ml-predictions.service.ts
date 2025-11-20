@@ -306,8 +306,6 @@ export class MLPredictionsService {
     });
 
     const teamChanges = recentJoiners;
-    const loadRatio =
-      teamCapacity > 0 ? committedEffort / teamCapacity : 1;
 
     const features = {
       committedEffort,
@@ -316,7 +314,6 @@ export class MLPredictionsService {
       missedStories,
       teamChanges,
       bugsOpen,
-      loadRatio,
     };
 
     type RiskPythonResponse = {
