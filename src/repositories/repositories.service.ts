@@ -37,11 +37,16 @@ export class RepositoriesService {
       throw new ForbiddenException('No tienes acceso a este proyecto');
     }
 
-    // Verificar si tiene permisos para editar (Scrum Master, Owner)
+    // Verificar si tiene permisos para editar (Owner, Scrum Master, Product Owner)
     const canEdit =
-      isOwner || member?.role === 'SCRUM_MASTER' || member?.role === 'PRODUCT_OWNER';
+      isOwner ||
+      member?.role === 'SCRUM_MASTER' ||
+      member?.role === 'PRODUCT_OWNER';
 
-    return { project, isOwner, isMember, userRole: member?.role, canEdit };
+    // Si es owner, considerar su rol como PRODUCT_OWNER por defecto
+    const userRole = isOwner ? 'PRODUCT_OWNER' : member?.role;
+
+    return { project, isOwner, isMember, userRole, canEdit };
   }
 
   /**
@@ -71,7 +76,9 @@ export class RepositoriesService {
     });
 
     if (existingRepo) {
-      throw new BadRequestException('Ya existe un repositorio con esa URL en este proyecto');
+      throw new BadRequestException(
+        'Ya existe un repositorio con esa URL en este proyecto',
+      );
     }
 
     // Si se marca como principal, desmarcar el anterior
@@ -289,4 +296,3 @@ export class RepositoriesService {
     return updatedRepository;
   }
 }
-
